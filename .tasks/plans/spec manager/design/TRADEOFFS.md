@@ -15,11 +15,11 @@ is useful.
 
 Faithfulness has three dimensions:
 
-- **Completeness**: every requirement in the spec appears in the output.
+* **Completeness**: every requirement in the spec appears in the output.
   Nothing is silently lost.
-- **Correctness**: each captured requirement is correctly interpreted.
+* **Correctness**: each captured requirement is correctly interpreted.
   The implementation does what the spec says, not something adjacent.
-- **Traceability**: every piece of output can be traced back to the
+* **Traceability**: every piece of output can be traced back to the
   specific requirement that produced it. The chain from output to source
   is unbroken.
 

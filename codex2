@@ -9,4 +9,4 @@
 #   codex [args...]       - Standard codex (use this if you don't want --yolo)
 
 export CODEX_HOME="$HOME/.codex2"
-codex --yolo "$@"
+codex --dangerously-bypass-approvals-and-sandbox "$@"

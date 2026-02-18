@@ -1,46 +1,3 @@
-# TODO(single-layer): KEEP/EXTEND — Evaluation runner needs single-layer evaluation support
-#   (Section 14). Add A/B comparison capability: run same spec through L1→L2→L3 pipeline
-#   vs single-layer three-phase forward-only model (Libraries→Architecture→Quality),
-#   compare outcomes. Success criteria (Section 14.2): shape verifier pass rate, work
-#   item convergence, iteration count. Failure criteria (Section 14.3): stagnation,
-#   unbounded growth, shape drift, architecture issues previously caught by pins
-#   escaping without verifier replacement, any reliance on LLM heuristics to declare
-#   success (must be flagged as failure). Proof-of-feasibility milestone (Section 14.4):
-#   single library end-to-end with shape routing. Proof-of-feasibility assertions:
-#   failing verifier routes to correct owner shape, Libraries phase fixes converge
-#   (verifier passes after fix), no manual intervention needed.
-#   A/B control requirements (Section 14.1): same fixtures, same seeds/models, same
-#   budgets for both pipelines to ensure fair comparison.
-#   Spec fidelity criterion (Section 14.2): QA/judge pass rate >= baseline, no increase
-#   in dropped requirements. Complexity reduction criterion (Section 14.2): measure pin/
-#   layer machinery deletion, fewer gate definitions, fewer dispatch branches.
-# ALGORITHM(single-layer):
-#   References: response3 Section 14.1, 14.2, 14.3, 14.4.
-#   Data structures:
-#     - EvalVariant = Literal['baseline_layers', 'single_layer_shapes'].
-#     - VariantRunResult: {variant: EvalVariant, run_id: str, metrics: dict[str, Any], failures: list[str], artifacts: dict[str, str]}.
-#     - ABComparison: {spec_id: str, baseline: VariantRunResult, single_layer: VariantRunResult, deltas: dict[str, float], passed: bool, failure_reasons: list[str]}.
-#   Interface contracts:
-#     - def run_ab_evaluation(self, spec: SequenceSpec, cfg: EvalConfig) -> ABComparison
-#     - def run_single_layer_variant(self, spec: SequenceSpec, cfg: EvalConfig) -> VariantRunResult
-#   Control flow:
-#     1. For each fixture/spec, run baseline and single-layer variants with identical seeds/models/budgets.
-#     2. Collect shape-specific outputs for single-layer: verifier pass rates, work-item convergence, per-phase iteration counts, shape drift incidents.
-#     3. Compute success criteria: spec fidelity not worse, reduced thrash, complexity reduction.
-#     4. Apply failure criteria: stagnation, unbounded growth, unresolved drift, escaped architecture issues, heuristic-only success claims.
-#     5. Support proof-of-feasibility mode that validates one-library end-to-end routing/fix within Libraries phase.
-#   Error handling:
-#     - If either variant fails to execute, mark comparison invalid with explicit infrastructure failure reason.
-#   Integration points:
-#     - Calls lifecycle/orchestrator in both modes and metrics module extensions.
-#   Test requirements:
-#     - A/B fairness constraints enforced.
-#     - Failure criteria flags trigger correctly.
-#     - PoF assertions: owner-shape routing and Libraries phase convergence.
-# IMPL(single-layer): `refinement.evals.metrics` is the source of truth for Section 14.2/
-# 14.3 metric computations; runner should aggregate/apply pass-fail policy using those
-# outputs instead of duplicating formula logic.
-
 """Evaluation runner for spec refinement system.
 
 Orchestrates evaluation of sequence specs through the refinement pipeline,
@@ -55,10 +12,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
-from typing import cast as typing_cast
+from typing import TYPE_CHECKING, Any
 
-from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.core.project_root import resolve_from_root
 from spec_manager.refinement.evals.checkpoint import (
     CheckpointCorruptedError,
@@ -74,20 +29,12 @@ from spec_manager.refinement.evals.metrics import (
     DetailScore,
     PhaseMetrics,
     analyze_convergence,
-    compute_complexity_metrics,
-    compute_shape_metrics,
-    compute_spec_fidelity_metrics,
-    compute_thrash_metrics,
     score_detail_capture,
 )
 from spec_manager.refinement.evals.report import EvalReport, EvalResult, save_report
 
 if TYPE_CHECKING:
     from spec_manager.refinement.interactive.signal_resolver import SignalResolver
-
-
-EvalVariant = Literal["baseline_layers", "single_layer_shapes"]
-RunnerMode = Literal["ab_compare", "baseline_layers", "single_layer_shapes"]
 
 
 @dataclass
@@ -123,14 +70,6 @@ class EvalConfig:
     sparse: bool = False
     resolve_ambiguities: bool = False
     use_judge: bool = False
-    # IMPL(single-layer): Add explicit A/B control fields here (variant selector and shared
-    # seed/model/budget controls) so baseline_layers and single_layer_shapes runs are
-    # configured from one fairness contract (Section 14.1).
-    runner_mode: RunnerMode = "ab_compare"
-    shared_seed: int = 0
-    shared_model: str = "default"
-    shared_budget: int | None = None
-    proof_of_feasibility: bool = False
     use_pdd: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,11 +88,6 @@ class EvalConfig:
             "sparse": self.sparse,
             "resolve_ambiguities": self.resolve_ambiguities,
             "use_judge": self.use_judge,
-            "runner_mode": self.runner_mode,
-            "shared_seed": self.shared_seed,
-            "shared_model": self.shared_model,
-            "shared_budget": self.shared_budget,
-            "proof_of_feasibility": self.proof_of_feasibility,
             "use_pdd": self.use_pdd,
         }
 
@@ -189,45 +123,6 @@ class EvalState:
     workspace_manager: Any = None  # WorkspaceManager when using real workflows
 
 
-@dataclass
-class VariantRunResult:
-    variant: EvalVariant
-    run_id: str
-    metrics: dict[str, Any] = field(default_factory=dict)
-    failures: list[str] = field(default_factory=list)
-    artifacts: dict[str, str] = field(default_factory=dict)
-    eval_result: EvalResult | None = field(default=None, repr=False, compare=False)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "variant": self.variant,
-            "run_id": self.run_id,
-            "metrics": self.metrics,
-            "failures": self.failures,
-            "artifacts": self.artifacts,
-        }
-
-
-@dataclass
-class ABComparison:
-    spec_id: str
-    baseline: VariantRunResult
-    single_layer: VariantRunResult
-    deltas: dict[str, float] = field(default_factory=dict)
-    passed: bool = False
-    failure_reasons: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "spec_id": self.spec_id,
-            "baseline": self.baseline.to_dict(),
-            "single_layer": self.single_layer.to_dict(),
-            "deltas": self.deltas,
-            "passed": self.passed,
-            "failure_reasons": self.failure_reasons,
-        }
-
-
 # Phase names in evaluation order
 EVAL_PHASES = [
     "sectionization",
@@ -239,19 +134,6 @@ EVAL_PHASES = [
     "interfaces",
     "tasks",
 ]
-
-_PHASE_SEQUENCE: tuple[PhaseId, PhaseId, PhaseId] = ("libraries", "architecture", "quality")
-_SINGLE_LAYER_FORWARD_PHASES: dict[PhaseId, list[str]] = {
-    "libraries": [
-        "sectionization",
-        "summarization",
-        "library_synthesis",
-        "evidence_expansion",
-        "spec_building",
-    ],
-    "architecture": ["architecture", "interfaces"],
-    "quality": ["tasks"],
-}
 
 
 class EvalRunner:
@@ -292,9 +174,6 @@ class EvalRunner:
         Returns:
             EvalReport with results for all specs.
         """
-        # IMPL(single-layer): `run()` should orchestrate paired baseline vs single-layer
-        # executions per spec using identical fixtures/seeds/models/budgets, then persist
-        # ABComparison outputs with explicit deltas/failure reasons (Sections 14.1-14.3).
         run_id = f"eval_{uuid.uuid4().hex[:8]}"
         report = EvalReport(run_id=run_id)
 
@@ -304,33 +183,14 @@ class EvalRunner:
             report.recommendations.append("No specs found to evaluate.")
             return report
 
-        comparisons: list[ABComparison] = []
-
         # Evaluate each spec
         for spec in specs:
-            if self.config.runner_mode == "ab_compare":
-                comparison = self.run_ab_evaluation(spec, self.config)
-                comparisons.append(comparison)
-                result = self._comparison_result_for_report(comparison)
-            elif self.config.runner_mode == "single_layer_shapes":
-                single_layer = self.run_single_layer_variant(spec, self.config)
-                result = self._result_from_variant(single_layer, spec)
-            else:
-                result = self._evaluate_spec(spec, run_id)
+            result = self._evaluate_spec(spec, run_id)
             report.add_result(result)
 
         # Compute aggregates and save
         report.config = self.config.to_dict()
         report.compute_aggregates()
-        # IMPL(single-layer): Report serialization should include comparison-level outcomes
-        # (baseline, single-layer, delta metrics, invalid-comparison infra failures) so
-        # Section 14 pass/fail policy is auditable from artifacts.
-        if comparisons:
-            report.aggregate_metrics["ab_comparisons"] = [item.to_dict() for item in comparisons]
-            report.aggregate_metrics["ab_passed"] = sum(1 for item in comparisons if item.passed)
-            report.aggregate_metrics["ab_failed"] = (
-                len(comparisons) - report.aggregate_metrics["ab_passed"]
-            )
         save_report(report, self.config.output_dir, f"eval_report_{run_id}")
 
         return report
@@ -353,12 +213,6 @@ class EvalRunner:
                 success=False,
                 errors=[f"Spec not found: {spec_id}"],
             )
-        if self.config.runner_mode == "ab_compare":
-            comparison = self.run_ab_evaluation(spec, self.config)
-            return self._comparison_result_for_report(comparison)
-        if self.config.runner_mode == "single_layer_shapes":
-            single_layer = self.run_single_layer_variant(spec, self.config)
-            return self._result_from_variant(single_layer, spec)
         return self._evaluate_spec(spec, run_id)
 
     def resume(self, run_id: str) -> EvalReport | None:
@@ -370,8 +224,6 @@ class EvalRunner:
         Returns:
             EvalReport if resumed successfully, None otherwise.
         """
-        # IMPL(single-layer): Checkpoint identity/payload must carry variant metadata so
-        # resume cannot mix baseline and single-layer trajectories in one comparison.
         try:
             checkpoint = self.checkpoint_manager.load(run_id)
         except CheckpointCorruptedError as exc:
@@ -391,409 +243,6 @@ class EvalRunner:
         report.compute_aggregates()
 
         return report
-
-    def run_ab_evaluation(self, spec: SequenceSpec, cfg: EvalConfig) -> ABComparison:
-        fairness_contract = self._build_fairness_contract(cfg)
-
-        baseline = self._run_baseline_variant(spec, fairness_contract)
-        single_layer = self.run_single_layer_variant(spec, cfg)
-
-        failure_reasons: list[str] = []
-        for reason in baseline.failures:
-            failure_reasons.append(f"baseline::{reason}")
-        for reason in single_layer.failures:
-            failure_reasons.append(f"single_layer::{reason}")
-
-        baseline_payload = baseline.metrics.get("run_payload")
-        single_payload = single_layer.metrics.get("run_payload")
-        if not isinstance(baseline_payload, dict) or not isinstance(single_payload, dict):
-            failure_reasons.append("infrastructure_failure::missing_variant_payload")
-            return ABComparison(
-                spec_id=spec.spec_id,
-                baseline=baseline,
-                single_layer=single_layer,
-                deltas={},
-                passed=False,
-                failure_reasons=sorted(set(failure_reasons)),
-            )
-
-        baseline_fairness = baseline_payload.get("fairness_contract")
-        single_fairness = single_payload.get("fairness_contract")
-        if baseline_fairness != fairness_contract or single_fairness != fairness_contract:
-            failure_reasons.append("fairness_contract_mismatch")
-
-        # IMPL(single-layer): `refinement.evals.metrics` is the source of truth for Section 14.2/
-        # 14.3 metric computations; runner should aggregate/apply pass-fail policy using those
-        # outputs instead of duplicating formula logic.
-        fidelity_metrics = compute_spec_fidelity_metrics(
-            baseline_payload,
-            single_payload,
-        )
-        baseline_shape_metrics = compute_shape_metrics(baseline_payload)
-        single_shape_metrics = compute_shape_metrics(single_payload)
-        complexity_metrics = compute_complexity_metrics(baseline_payload, single_payload)
-        baseline_thrash_metrics = compute_thrash_metrics(baseline_payload)
-        single_thrash_metrics = compute_thrash_metrics(single_payload)
-
-        if (
-            single_thrash_metrics.work_item_churn_ratio
-            > baseline_thrash_metrics.work_item_churn_ratio
-        ):
-            failure_reasons.append("work_item_churn_regression")
-        if single_thrash_metrics.phase_local_retries > baseline_thrash_metrics.phase_local_retries:
-            failure_reasons.append("phase_local_retries_regression")
-        if single_thrash_metrics.requeue_count > baseline_thrash_metrics.requeue_count:
-            failure_reasons.append("work_item_requeue_regression")
-
-        failure_reasons.extend(fidelity_metrics.failure_flags)
-        failure_reasons.extend(single_shape_metrics.failure_flags)
-        failure_reasons.extend(complexity_metrics.failure_flags)
-        failure_reasons.extend(single_thrash_metrics.failure_flags)
-
-        if cfg.proof_of_feasibility:
-            failure_reasons.extend(self._evaluate_pof_assertions(single_payload))
-
-        deltas = {
-            "fidelity_delta": fidelity_metrics.fidelity_delta,
-            "shape_verifier_pass_rate_delta": (
-                single_shape_metrics.shape_verifier_pass_rate
-                - baseline_shape_metrics.shape_verifier_pass_rate
-            ),
-            "work_item_convergence_rate_delta": (
-                single_shape_metrics.work_item_convergence_rate
-                - baseline_shape_metrics.work_item_convergence_rate
-            ),
-            "avg_iterations_to_close_delta": (
-                baseline_shape_metrics.avg_iterations_to_close
-                - single_shape_metrics.avg_iterations_to_close
-            ),
-            "work_item_churn_ratio_delta": (
-                baseline_thrash_metrics.work_item_churn_ratio
-                - single_thrash_metrics.work_item_churn_ratio
-            ),
-            "requeue_count_delta": float(
-                baseline_thrash_metrics.requeue_count - single_thrash_metrics.requeue_count
-            ),
-            "phase_local_retries_delta": float(
-                baseline_thrash_metrics.phase_local_retries
-                - single_thrash_metrics.phase_local_retries
-            ),
-            "deleted_pin_modules": float(complexity_metrics.deleted_pin_modules),
-            "deleted_layer_branches": float(complexity_metrics.deleted_layer_branches),
-            "gate_count_delta": float(complexity_metrics.gate_count_delta),
-            "dispatch_branch_delta": float(complexity_metrics.dispatch_branch_delta),
-        }
-
-        return ABComparison(
-            spec_id=spec.spec_id,
-            baseline=baseline,
-            single_layer=single_layer,
-            deltas=deltas,
-            passed=not failure_reasons,
-            failure_reasons=sorted(set(failure_reasons)),
-        )
-
-    def run_single_layer_variant(self, spec: SequenceSpec, cfg: EvalConfig) -> VariantRunResult:
-        variant: EvalVariant = "single_layer_shapes"
-        run_id = f"eval_{spec.spec_id}_single_{uuid.uuid4().hex[:8]}"
-        fairness_contract = self._build_fairness_contract(cfg)
-        try:
-            phases = self._single_layer_eval_phases()
-            eval_result = self._evaluate_spec_with_phases(spec, run_id, phases)
-        except Exception as exc:
-            return VariantRunResult(
-                variant=variant,
-                run_id=run_id,
-                failures=[f"infrastructure_failure::{exc}"],
-                artifacts={},
-            )
-
-        run_payload = self._build_variant_run_payload(
-            spec=spec,
-            variant=variant,
-            result=eval_result,
-            fairness_contract=fairness_contract,
-        )
-        shape_metrics = compute_shape_metrics(run_payload)
-        thrash_metrics = compute_thrash_metrics(run_payload)
-
-        failures: list[str] = []
-        if not eval_result.success:
-            failures.append("execution_failed")
-        failures.extend(shape_metrics.failure_flags)
-        failures.extend(thrash_metrics.failure_flags)
-        if cfg.proof_of_feasibility:
-            failures.extend(self._evaluate_pof_assertions(run_payload))
-
-        metrics = {
-            "run_payload": run_payload,
-            "shape_metrics": shape_metrics.to_dict(),
-            "thrash_metrics": thrash_metrics.to_dict(),
-        }
-        artifacts = {
-            "log_path": str(self.config.output_dir / f"{run_id}_{spec.spec_id}.log.jsonl"),
-            "checkpoint_id": f"{run_id}_{spec.spec_id}",
-        }
-        return VariantRunResult(
-            variant=variant,
-            run_id=run_id,
-            metrics=metrics,
-            failures=sorted(set(failures)),
-            artifacts=artifacts,
-            eval_result=eval_result,
-        )
-
-    def _run_baseline_variant(
-        self,
-        spec: SequenceSpec,
-        fairness_contract: dict[str, Any],
-    ) -> VariantRunResult:
-        variant: EvalVariant = "baseline_layers"
-        run_id = f"eval_{spec.spec_id}_baseline_{uuid.uuid4().hex[:8]}"
-        try:
-            eval_result = self._evaluate_spec(spec, run_id)
-        except Exception as exc:
-            return VariantRunResult(
-                variant=variant,
-                run_id=run_id,
-                failures=[f"infrastructure_failure::{exc}"],
-                artifacts={},
-            )
-
-        run_payload = self._build_variant_run_payload(
-            spec=spec,
-            variant=variant,
-            result=eval_result,
-            fairness_contract=fairness_contract,
-        )
-        metrics = {
-            "run_payload": run_payload,
-            "shape_metrics": compute_shape_metrics(run_payload).to_dict(),
-            "thrash_metrics": compute_thrash_metrics(run_payload).to_dict(),
-        }
-        failures: list[str] = []
-        if not eval_result.success:
-            failures.append("execution_failed")
-        artifacts = {
-            "log_path": str(self.config.output_dir / f"{run_id}_{spec.spec_id}.log.jsonl"),
-            "checkpoint_id": f"{run_id}_{spec.spec_id}",
-        }
-        return VariantRunResult(
-            variant=variant,
-            run_id=run_id,
-            metrics=metrics,
-            failures=failures,
-            artifacts=artifacts,
-            eval_result=eval_result,
-        )
-
-    def _build_fairness_contract(self, cfg: EvalConfig) -> dict[str, Any]:
-        return {
-            "seed": cfg.shared_seed,
-            "model": cfg.shared_model,
-            "budget": cfg.shared_budget
-            if cfg.shared_budget is not None
-            else cfg.max_iterations_per_phase,
-        }
-
-    def _build_variant_run_payload(
-        self,
-        *,
-        spec: SequenceSpec,
-        variant: EvalVariant,
-        result: EvalResult,
-        fairness_contract: dict[str, Any],
-    ) -> dict[str, Any]:
-        detail_metrics = result.detail_metrics or DetailCaptureMetrics()
-        dropped_requirements = max(
-            0,
-            detail_metrics.total_details_expected - detail_metrics.total_details_captured,
-        )
-        phase_iteration_counts: dict[PhaseId, int] = {phase_id: 0 for phase_id in _PHASE_SEQUENCE}
-        requeue_count = 0
-        phase_local_retries = 0
-        open_work_item_counts: list[int] = []
-        open_work_items = 0
-        shape_verifiers: list[dict[str, Any]] = []
-        work_items: list[dict[str, Any]] = []
-
-        for phase_name, phase_metrics in result.phase_results.items():
-            phase_id = self._phase_id_for_eval_phase(phase_name)
-            phase_iteration_counts[phase_id] += max(0, phase_metrics.iterations)
-            retries = max(0, phase_metrics.iterations - 1)
-            phase_local_retries += retries
-
-            converged = phase_metrics.converged
-            status = "DONE" if converged else "OPEN"
-            if not converged:
-                requeue_count += 1
-                open_work_items += 1
-            open_work_item_counts.append(open_work_items)
-
-            verifier_entry = {
-                "shape_id": f"{spec.spec_id}:{phase_name}",
-                "owner_phase": phase_id,
-                "results": [
-                    {
-                        "kind": "HARD_CHECK",
-                        "passed": converged,
-                    }
-                ],
-            }
-            shape_verifiers.append(verifier_entry)
-            work_items.append(
-                {
-                    "work_item_id": f"{spec.spec_id}:{phase_name}",
-                    "status": status,
-                    "iterations_to_close": max(1, phase_metrics.iterations),
-                    "metadata": {
-                        "shape_id": phase_name,
-                        "phase": phase_id,
-                    },
-                }
-            )
-
-        work_item_churn_ratio = (
-            (requeue_count + phase_local_retries) / len(work_items) if work_items else 0.0
-        )
-        stagnation_events = sum(
-            1
-            for bottleneck in result.bottlenecks
-            if any(
-                marker in bottleneck
-                for marker in ("stagnation", "stagnant", "cycling", "max_iterations")
-            )
-        )
-        drift_open_count = sum(1 for error in result.errors if "drift" in error.lower())
-        escaped_architecture_issue_count = sum(
-            1
-            for error in result.errors
-            if "architecture" in error.lower() and "escape" in error.lower()
-        )
-        owner_shape_routed = bool(shape_verifiers)
-        libraries_converged = all(
-            metrics.converged
-            for phase_name, metrics in result.phase_results.items()
-            if self._phase_id_for_eval_phase(phase_name) == "libraries"
-        )
-
-        if variant == "baseline_layers":
-            pin_module_count = max(1, len(result.phase_results) // 2)
-            layer_branch_count = len(EVAL_PHASES)
-            gate_count = len(EVAL_PHASES) + 3
-            dispatch_branch_count = len(EVAL_PHASES)
-        else:
-            pin_module_count = 0
-            layer_branch_count = len(_PHASE_SEQUENCE)
-            gate_count = len(_PHASE_SEQUENCE)
-            dispatch_branch_count = len(_PHASE_SEQUENCE)
-
-        return {
-            "spec_id": spec.spec_id,
-            "variant": variant,
-            "qa_judge_pass_rate": detail_metrics.recall,
-            "dropped_requirement_count": dropped_requirements,
-            "shape_verifiers": shape_verifiers,
-            "work_items": work_items,
-            "phase_iteration_counts": phase_iteration_counts,
-            "stagnation_events": stagnation_events,
-            "drift_open_count": drift_open_count,
-            "unbounded_growth": any(
-                (not metrics.converged)
-                and metrics.iterations >= self.config.max_iterations_per_phase
-                for metrics in result.phase_results.values()
-            ),
-            "escaped_architecture_issue_count": escaped_architecture_issue_count,
-            "heuristic_only_completion": False,
-            "all_tests_pass": result.success and not result.errors,
-            "open_work_item_counts": open_work_item_counts,
-            "max_work_items_per_phase": fairness_contract["budget"],
-            "requeue_count": requeue_count,
-            "phase_local_retries": phase_local_retries,
-            "work_item_churn_ratio": work_item_churn_ratio,
-            "total_work_items": len(work_items),
-            "pin_module_count": pin_module_count,
-            "layer_branch_count": layer_branch_count,
-            "gate_count": gate_count,
-            "dispatch_branch_count": dispatch_branch_count,
-            "routing": {
-                "work_items": work_items,
-                "verifier_summaries": shape_verifiers,
-            },
-            "fairness_contract": fairness_contract,
-            "run_state": {
-                "phase_iteration_counts": phase_iteration_counts,
-                "open_work_item_count_history": open_work_item_counts,
-            },
-            "pof": {
-                "owner_shape_routed": owner_shape_routed,
-                "libraries_fix_converged": libraries_converged,
-                "manual_intervention_required": any(
-                    "manual intervention" in error.lower() for error in result.errors
-                ),
-            },
-        }
-
-    def _single_layer_eval_phases(self) -> list[str]:
-        if self.config.use_real_workflows:
-            return list(EVAL_PHASES)
-        return [
-            "library_synthesis",
-            "architecture",
-            "tasks",
-        ]
-
-    def _phase_id_for_eval_phase(self, eval_phase: str) -> PhaseId:
-        for phase_id, eval_phases in _SINGLE_LAYER_FORWARD_PHASES.items():
-            if eval_phase in eval_phases:
-                return phase_id
-        return typing_cast("PhaseId", "quality")
-
-    def _evaluate_pof_assertions(self, payload: dict[str, Any]) -> list[str]:
-        pof = payload.get("pof")
-        if not isinstance(pof, dict):
-            return ["pof_missing_artifacts"]
-
-        failures: list[str] = []
-        if not bool(pof.get("owner_shape_routed", False)):
-            failures.append("pof_owner_shape_routing_failed")
-        if not bool(pof.get("libraries_fix_converged", False)):
-            failures.append("pof_libraries_phase_not_converged")
-        if bool(pof.get("manual_intervention_required", True)):
-            failures.append("pof_manual_intervention_required")
-        return failures
-
-    def _result_from_variant(self, variant: VariantRunResult, spec: SequenceSpec) -> EvalResult:
-        if variant.eval_result is None:
-            return EvalResult(
-                spec_id=spec.spec_id,
-                spec_title=spec.title,
-                success=False,
-                errors=variant.failures or ["Variant did not produce an eval result."],
-            )
-        if variant.failures:
-            variant.eval_result.success = False
-            variant.eval_result.errors.extend(variant.failures)
-        return variant.eval_result
-
-    def _comparison_result_for_report(self, comparison: ABComparison) -> EvalResult:
-        baseline_result = comparison.baseline.eval_result
-        if baseline_result is None:
-            return EvalResult(
-                spec_id=comparison.spec_id,
-                spec_title=comparison.spec_id,
-                success=False,
-                errors=(
-                    comparison.failure_reasons
-                    or ["AB comparison failed before baseline result was produced."]
-                ),
-            )
-
-        if not comparison.passed:
-            baseline_result.success = False
-            baseline_result.errors.extend(comparison.failure_reasons)
-            baseline_result.bottlenecks.append("ab_comparison_failed")
-        return baseline_result
 
     def _load_specs(self) -> list[SequenceSpec]:
         """Load specs to evaluate based on config."""
@@ -823,20 +272,8 @@ class EvalRunner:
         Returns:
             EvalResult for the spec.
         """
-        return self._evaluate_spec_with_phases(spec, run_id, EVAL_PHASES)
-
-    def _evaluate_spec_with_phases(
-        self,
-        spec: SequenceSpec,
-        run_id: str,
-        phases: list[str],
-    ) -> EvalResult:
-        """Evaluate a single spec through a specific phase list."""
         state = EvalState(spec=spec, run_id=run_id)
 
-        # IMPL(single-layer): Route spec execution through variant-aware paths while
-        # preserving the same input fixture and fairness controls for both variants
-        # before computing deltas (Section 14.1).
         # Sparse-to-dense evaluation mode
         if self.config.sparse and spec.sparse_spec_path:
             return self._evaluate_sparse_to_dense(spec, state, run_id)
@@ -859,11 +296,11 @@ class EvalRunner:
         result = EvalResult(
             spec_id=spec.spec_id,
             spec_title=spec.title,
-            phases_total=len(phases),
+            phases_total=len(EVAL_PHASES),
         )
 
         try:
-            for phase in phases:
+            for phase in EVAL_PHASES:
                 phase_metrics = self._evaluate_phase(state, phase, logger, checkpoint)
                 result.phase_results[phase] = phase_metrics
                 state.detail_metrics.add_phase_metrics(phase_metrics)
@@ -1026,8 +463,6 @@ class EvalRunner:
         Returns:
             EvalResult for the spec.
         """
-        # IMPL(single-layer): Resume logic should restore variant-scoped phase metrics and
-        # fairness inputs exactly, otherwise downstream A/B deltas are not valid.
         state = EvalState(spec=spec, run_id=checkpoint.run_id)
         logger = EvalLogger(
             self.config.output_dir / f"{checkpoint.run_id}.log.jsonl",
@@ -1111,9 +546,6 @@ class EvalRunner:
         # Get ground truth for this phase - use phase-appropriate expected items
         ground_truth = state.spec.ground_truth.get_phase_ground_truth(phase)
         expected_items = self._get_expected_items_for_phase(ground_truth, phase)
-        # IMPL(single-layer): Extend phase scoring inputs with deterministic single-layer
-        # signals (shape verifier outcomes, open work-item counts, drift incidents) from
-        # lifecycle artifacts for Section 14.2/14.3 checks.
 
         # Phase execution with convergence tracking
         actual_items: list[str] = []
@@ -1169,9 +601,6 @@ class EvalRunner:
             )
 
             # Check for convergence
-            # IMPL(single-layer): Recall threshold alone cannot declare success in
-            # single-layer mode; deterministic verifier/work-item convergence authority
-            # must be enforced before marking a phase converged (Section 14.3).
             if convergence_ratio >= self.config.convergence_threshold:
                 converged = True
                 gaps_closed = score.matched_count
@@ -1277,9 +706,6 @@ class EvalRunner:
 
         # Run the phase workflow (only on first iteration for each phase)
         if iteration == 1:
-            # IMPL(single-layer): Persist per-phase routing/verifier evidence here
-            # (owner shape, verifier failures, drift diagnostics, work-item deltas) so
-            # A/B comparisons and PoF assertions can be computed from run artifacts.
             try:
                 workflow_result = state.workspace_integration.run_phase_workflow(
                     state.workspace_manager, phase
@@ -1356,9 +782,6 @@ class EvalRunner:
         """
         # Map eval phases to the chain of workspace phases that need completion.
         # Downstream workflows check these intermediate phases.
-        # IMPL(single-layer): Add forward-only Libraries->Architecture->Quality phase
-        # chain coverage for Section 14.4 proof-of-feasibility assertions (owner-shape
-        # routing and Libraries-phase fix convergence without manual intervention).
         phase_chains: dict[str, list[str]] = {
             "sectionization": ["sectionization"],
             "summarization": ["summarization"],
@@ -1427,9 +850,6 @@ class EvalRunner:
         if self._phase_uses_constraint_scoring(phase, ground_truth):
             return self._score_constraint_satisfaction(ground_truth, actual)
 
-        # IMPL(single-layer): Judge/fuzzy scoring is diagnostic for fidelity deltas, but
-        # it must not become the sole success authority without deterministic verifier
-        # evidence (Section 14.3 heuristic-only failure criterion).
         if self.config.use_judge:
             from spec_manager.refinement.evals.judge_scorer import (
                 score_detail_capture_with_judge,

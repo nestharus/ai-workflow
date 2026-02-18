@@ -1,3 +1,4 @@
+# TODO(single-layer): DELETE — Tests for PinFunctionSchema which is DELETE'd.
 """Tests for the PinFunctionSchema Pydantic model."""
 
 from __future__ import annotations

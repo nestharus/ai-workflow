@@ -1,46 +1,6 @@
-# TODO(single-layer): RESTRUCTURE — Architecture strategy loses L2 gate. Instead
-#   activates during Architecture phase (Section 9.1 phase 2 of 3). The core
-#   algorithm (detect decision points -> propose candidates -> evaluate -> persist ->
-#   create work items -> manage WaitGraph) all KEEPS. Shape docs inform which
-#   components are affected by architecture decisions. Decision artifacts route by
-#   shape_id instead of pin references.
-# ALGORITHM(single-layer):
-#   References: response3 Sections 9.1 and 7.2.
-#   Data structures:
-#     - PhaseId = Literal['libraries', 'architecture', 'quality'].
-#     - DecisionOutcome metadata must include shape_id and contract_ids.
-#     - ARCH_DECISION work items must include shape_id routing handle.
-#   Interface contracts:
-#     - def run(self, session: PlanningSession) -> PlanningSession
-#     - def _should_run(self, session: PlanningSession) -> bool  # phase == 'architecture' and impact threshold
-#   Control flow:
-#     1. Replace L2 gating with architecture-phase gating (phase == 'architecture').
-#     2. Keep detector/proposer/evaluator/persistence pipeline.
-#     3. Build ScopePacket from shape ownership and shape contracts, not pin references.
-#     4. Architecture phase edits code via PromotionLoop IMPLEMENT step — can edit
-#        component structure AND algorithm implementations in-place.
-#     5. Persist decision artifacts. Architecture can refine algorithms in-place within
-#        existing library boundaries (no target_phase routing to libraries). If a decision
-#        requires new library creation or ownership change, BLOCK with diagnostics.
-#   Error handling:
-#     - Missing shape mapping for a decision point creates blocked architecture decision and wait graph edge.
-#   Integration points:
-#     - Called by planner API capability PLAN during architecture phase.
-#     - Calls work_item_store and wait_graph unchanged.
-# IMPL(single-layer): ARCH_DECISION emissions from this strategy should populate the
-# shared work-item routing contract (`shape_id`, `created_in_phase='architecture'`,
-# `required_change_type`, `evidence_refs`, `contract_ids`) and persist through
-# `WorkItemStore.create/upsert` rather than legacy status-only update paths.
-# IMPL(single-layer): Session gating authority should read the forward-only phase
-# context (`phase == 'architecture'`) from Section 9.1, not legacy layer ids.
-#   Test requirements:
-#     - Strategy runs only in architecture phase.
-#     - Decision artifacts include shape IDs.
-#     - Blocked decisions create wait graph edges.
-
 """Architecture planning strategy.
 
-Gated by architecture phase + impact >= MEDIUM. Detects decision points, proposes candidates,
+Gated by L2 + impact >= MEDIUM. Detects decision points, proposes candidates,
 evaluates them, persists artifacts, creates ARCH_DECISION work items, and
 manages WaitGraph edges for blocked decisions.
 """
@@ -55,7 +15,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.planner.architecture.artifacts import persist_decision_artifacts
 from spec_manager.planner.architecture.decision_detector import DecisionPointDetector
 from spec_manager.planner.architecture.evaluator import CandidateEvaluator
@@ -66,11 +25,10 @@ from spec_manager.planner.constraints.types import ConstraintFact
 from .protocol import PlanningSession
 
 logger = logging.getLogger(__name__)
-_ARCHITECTURE_PHASE: PhaseId = "architecture"
 
 
 class ArchitecturePlannerStrategy:
-    """Architecture decision strategy. Only runs for architecture phase + impact >= MEDIUM.
+    """Architecture decision strategy. Only runs for L2 + impact >= MEDIUM.
 
     Orchestrates:
     1. Decision point detection via :class:`DecisionPointDetector`.
@@ -111,8 +69,8 @@ class ArchitecturePlannerStrategy:
         if not self._should_run(session):
             return session
 
-        slice_id = str(session.ctx.get("slice_id", "unknown")).strip() or "unknown"
-        run_id = str(session.ctx.get("run_id", "default")).strip() or "default"
+        slice_id = session.ctx.get("slice_id", "unknown")
+        run_id = session.ctx.get("run_id", "default")
 
         # Gather authoritative constraints
         auth_constraints = []
@@ -156,19 +114,8 @@ class ArchitecturePlannerStrategy:
         if not decision_points:
             return session
 
-        decision_routing = self._resolve_decision_routings(
-            decision_points=decision_points,
-            slice_id=slice_id,
-            discovery=session.discovery,
-        )
-
         # 2. Create ARCH_DECISION work items for coordination tracking
-        self._create_work_items(
-            decision_points,
-            slice_id,
-            run_id,
-            decision_routing,
-        )
+        self._create_work_items(decision_points, slice_id)
 
         # Determine K based on impact; MEDIUM receives a small option set (2-3).
         k = 3 if session.impact and session.impact.impact == "HIGH" else 2
@@ -185,37 +132,12 @@ class ArchitecturePlannerStrategy:
 
         # 3-7. For each decision point: build scope, propose, evaluate, persist
         for dp in decision_points:
-            routing = decision_routing.get(str(getattr(dp, "decision_id", "")).strip(), {})
-            if not self._routing_has_shape_mapping(routing):
-                outcome = self._build_missing_shape_mapping_outcome(dp, routing=routing)
-                self._attach_outcome_metadata(outcome, routing)
-                persist_decision_artifacts(
-                    workspace_root=self._workspace_root,
-                    run_id=run_id,
-                    decision_id=dp.decision_id,
-                    candidates=[],
-                    assessments=[],
-                    outcome=outcome,
-                )
-                self._update_coordination(
-                    dp,
-                    outcome,
-                    slice_id,
-                    run_id=run_id,
-                    routing=routing,
-                )
-                session.decision_outcomes.append(outcome)
-                if outcome.under_spec_events:
-                    session.extend_under_spec_events(outcome.under_spec_events)
-                continue
-
             # 3. Build ScopePacket with routed source artifacts
             scope_packet = self._build_scope_packet(
                 dp,
                 slice_id,
                 auth_constraints,
                 session,
-                routing=routing,
             )
 
             # 4. Propose candidates
@@ -224,19 +146,6 @@ class ArchitecturePlannerStrategy:
             # 5. Evaluate candidates
             assessments = evaluator.evaluate(candidates, auth_constraints)
             outcome = evaluator.select_or_block(dp, candidates, assessments, auth_constraints)
-            authority_violation = self._detect_architecture_authority_violation(
-                decision_point=dp,
-                outcome=outcome,
-                candidates=candidates,
-            )
-            if authority_violation:
-                outcome = self._block_outcome_for_authority_violation(
-                    decision_point=dp,
-                    prior_outcome=outcome,
-                    diagnostic=authority_violation,
-                )
-
-            self._attach_outcome_metadata(outcome, routing)
 
             # 6. Persist artifacts
             persist_decision_artifacts(
@@ -249,13 +158,7 @@ class ArchitecturePlannerStrategy:
             )
 
             # 7. Update work item status + WaitGraph for blocked decisions
-            self._update_coordination(
-                dp,
-                outcome,
-                slice_id,
-                run_id=run_id,
-                routing=routing,
-            )
+            self._update_coordination(dp, outcome, slice_id)
 
             # 8. Accumulate on session
             session.decision_outcomes.append(outcome)
@@ -280,452 +183,10 @@ class ArchitecturePlannerStrategy:
 
         return session
 
-    def _resolve_decision_routings(
-        self,
-        *,
-        decision_points: list[Any],
-        slice_id: str,
-        discovery: dict[str, Any],
-    ) -> dict[str, dict[str, Any]]:
-        routing: dict[str, dict[str, Any]] = {}
-        shape_index = self._load_shape_index()
-        for decision_point in decision_points:
-            decision_id = str(getattr(decision_point, "decision_id", "")).strip()
-            if not decision_id:
-                continue
-            routing[decision_id] = self._resolve_decision_routing(
-                decision_point=decision_point,
-                slice_id=slice_id,
-                discovery=discovery,
-                shape_index=shape_index,
-            )
-        return routing
-
-    def _load_shape_index(self) -> Any | None:
-        try:
-            from spec_manager.routing import load_shape_pack
-
-            return load_shape_pack(self._workspace_root)
-        except Exception:
-            logger.debug("Unable to load shape pack for architecture strategy", exc_info=True)
-            return None
-
-    def _resolve_decision_routing(
-        self,
-        *,
-        decision_point: Any,
-        slice_id: str,
-        discovery: dict[str, Any],
-        shape_index: Any | None,
-    ) -> dict[str, Any]:
-        owner_slice_id = (
-            str(getattr(decision_point, "owner_slice_id", "")).strip() or str(slice_id).strip()
-        )
-        scope = str(getattr(decision_point, "scope", "") or "").strip()
-
-        evidence_refs: list[str] = []
-        self._extend_refs(evidence_refs, getattr(decision_point, "trigger_evidence", []))
-        if isinstance(discovery, dict):
-            self._extend_refs(evidence_refs, discovery.get("arch_files"))
-            self._extend_refs(evidence_refs, discovery.get("files"))
-        evidence_refs = self._dedupe_text_values(evidence_refs)
-
-        candidate_shape_id = ""
-        for key in ("shape_id", "owner_shape_id"):
-            value = str(getattr(decision_point, key, "")).strip()
-            if value:
-                candidate_shape_id = value
-                break
-
-        lookup_refs = self._shape_lookup_refs(
-            scope=scope,
-            owner_slice_id=owner_slice_id,
-            evidence_refs=evidence_refs,
-        )
-        if not candidate_shape_id and shape_index is not None:
-            try:
-                from spec_manager.routing import resolve_shape_for_file
-
-                for file_ref in lookup_refs:
-                    resolved = resolve_shape_for_file(file_ref, shape_index)
-                    resolved_text = str(resolved or "").strip()
-                    if resolved_text:
-                        candidate_shape_id = resolved_text
-                        break
-            except Exception:
-                logger.debug(
-                    "Unable to resolve shape for decision scope %s",
-                    scope,
-                    exc_info=True,
-                )
-
-        if not candidate_shape_id and shape_index is not None and owner_slice_id:
-            if self._shape_exists(shape_index, owner_slice_id):
-                candidate_shape_id = owner_slice_id
-
-        scope_fallback_reason = ""
-        if not candidate_shape_id:
-            intra_scope = self._parse_intra_scope(scope)
-            if intra_scope is not None:
-                candidate_shape_id = intra_scope[0]
-                scope_fallback_reason = (
-                    "Resolved shape routing from intra scope without shape-pack ownership evidence."
-                )
-        if not candidate_shape_id:
-            inter_scope = self._parse_inter_scope(scope)
-            if inter_scope is not None:
-                source_lib, target_lib, _ = inter_scope
-                if owner_slice_id in {source_lib, target_lib}:
-                    candidate_shape_id = owner_slice_id
-                else:
-                    candidate_shape_id = source_lib
-                scope_fallback_reason = (
-                    "Resolved shape routing from inter scope without shape-pack ownership evidence."
-                )
-
-        contract_ids: list[str] = []
-        verifier_ids: list[str] = []
-        shape_metadata: dict[str, Any] = {}
-        if candidate_shape_id and shape_index is not None:
-            shape = self._find_shape(shape_index, candidate_shape_id)
-            if shape is not None:
-                contracts = getattr(shape, "contracts", [])
-                for contract in contracts if isinstance(contracts, list) else []:
-                    cid = str(getattr(contract, "contract_id", "")).strip()
-                    if cid:
-                        contract_ids.append(cid)
-
-                verifiers = getattr(shape, "verifiers", [])
-                for verifier in verifiers if isinstance(verifiers, list) else []:
-                    vid = str(getattr(verifier, "verifier_id", "")).strip()
-                    if vid:
-                        verifier_ids.append(vid)
-
-                shape_metadata = {
-                    "shape_package": str(getattr(shape, "package", "")).strip(),
-                    "shape_source_path": str(getattr(shape, "source_path", "")).strip(),
-                }
-
-        if candidate_shape_id:
-            mapping_status = "resolved"
-            mapping_reason = scope_fallback_reason
-        else:
-            mapping_status = "missing"
-            mapping_reason = (
-                f"No shape mapping could be resolved for decision scope '{scope or 'unknown'}'."
-            )
-
-        return {
-            "owner_slice_id": owner_slice_id,
-            "shape_id": candidate_shape_id,
-            "contract_ids": self._dedupe_text_values(contract_ids),
-            "verifier_ids": self._dedupe_text_values(verifier_ids),
-            "evidence_refs": evidence_refs,
-            "mapping_status": mapping_status,
-            "mapping_reason": mapping_reason,
-            "lookup_refs": lookup_refs,
-            **shape_metadata,
-        }
-
-    @staticmethod
-    def _dedupe_text_values(values: Any) -> list[str]:
-        flattened: list[str] = []
-        ArchitecturePlannerStrategy._extend_refs(flattened, values)
-        if not flattened and values is not None and not isinstance(values, (dict, list, tuple, set)):
-            flattened = [str(values).strip()]
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for value in flattened:
-            text = str(value).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            deduped.append(text)
-        return deduped
-
-    def _shape_lookup_refs(
-        self,
-        *,
-        scope: str,
-        owner_slice_id: str,
-        evidence_refs: list[str],
-    ) -> list[str]:
-        refs: list[str] = []
-        intra_scope = self._parse_intra_scope(scope)
-        inter_scope = self._parse_inter_scope(scope)
-        if intra_scope is not None:
-            library_name, sub_scope = intra_scope
-            refs.append(f"libraries/{library_name}")
-            if sub_scope:
-                refs.append(f"libraries/{library_name}/{sub_scope.replace(':', '/')}")
-        if inter_scope is not None:
-            source_lib, target_lib, _ = inter_scope
-            refs.extend([f"libraries/{source_lib}", f"libraries/{target_lib}"])
-        if owner_slice_id:
-            refs.append(f"libraries/{owner_slice_id}")
-            refs.append(owner_slice_id)
-        for evidence_ref in evidence_refs:
-            if "/" in evidence_ref or "\\" in evidence_ref:
-                refs.append(evidence_ref)
-        return self._dedupe_text_values(refs)
-
-    @staticmethod
-    def _shape_exists(shape_index: Any, shape_id: str) -> bool:
-        shapes = getattr(shape_index, "shapes", {})
-        if not isinstance(shapes, dict):
-            return False
-        target = str(shape_id).strip()
-        if not target:
-            return False
-        for existing_shape_id in shapes:
-            if str(existing_shape_id).strip() == target:
-                return True
-        return False
-
-    @staticmethod
-    def _find_shape(shape_index: Any, shape_id: str) -> Any | None:
-        shapes = getattr(shape_index, "shapes", {})
-        if not isinstance(shapes, dict):
-            return None
-        target = str(shape_id).strip()
-        if not target:
-            return None
-        for existing_shape_id, shape in shapes.items():
-            if str(existing_shape_id).strip() == target:
-                return shape
-        return None
-
-    @staticmethod
-    def _routing_has_shape_mapping(routing: dict[str, Any]) -> bool:
-        return bool(str(routing.get("shape_id", "")).strip())
-
-    def _build_missing_shape_mapping_outcome(
-        self,
-        decision_point: Any,
-        *,
-        routing: dict[str, Any],
-    ) -> DecisionOutcome:
-        decision_id = str(getattr(decision_point, "decision_id", "")).strip()
-        scope = str(getattr(decision_point, "scope", "")).strip()
-        reason = str(routing.get("mapping_reason", "")).strip() or (
-            f"No shape mapping available for architecture decision scope '{scope or 'unknown'}'."
-        )
-        requirement_id = f"shape_mapping:{decision_id or 'unknown'}"
-        return DecisionOutcome(
-            decision_id=decision_id,
-            committed=False,
-            selected_candidate_id="",
-            wiring_intentions=[],
-            new_constraints=[],
-            under_spec_events=[
-                {
-                    "type": "architecture_shape_mapping_missing",
-                    "question": "Which shape owns this architecture decision?",
-                    "reason": reason,
-                    "detail": (
-                        "Architecture decision is blocked until shape ownership mapping is resolved."
-                    ),
-                    "scope": scope,
-                }
-            ],
-            decision_requirements=[requirement_id],
-        )
-
-    @staticmethod
-    def _attach_outcome_metadata(
-        outcome: DecisionOutcome,
-        routing: dict[str, Any],
-    ) -> None:
-        metadata = {
-            "shape_id": str(routing.get("shape_id", "")).strip(),
-            "contract_ids": [
-                str(item).strip()
-                for item in routing.get("contract_ids", [])
-                if str(item).strip()
-            ],
-        }
-        outcome.metadata = metadata
-        if outcome.wiring_intentions:
-            for intention in outcome.wiring_intentions:
-                if not isinstance(intention, dict):
-                    continue
-                intention.setdefault("shape_id", metadata["shape_id"])
-                intention.setdefault("contract_ids", list(metadata["contract_ids"]))
-
-    def _detect_architecture_authority_violation(
-        self,
-        *,
-        decision_point: Any,
-        outcome: DecisionOutcome,
-        candidates: list[Any],
-    ) -> str:
-        if not outcome.committed:
-            return ""
-
-        selected_candidate = None
-        for candidate in candidates:
-            if str(getattr(candidate, "candidate_id", "")).strip() == str(
-                outcome.selected_candidate_id
-            ).strip():
-                selected_candidate = candidate
-                break
-        if selected_candidate is None:
-            return ""
-
-        proposal = getattr(selected_candidate, "proposal", {})
-        target_phase = str(
-            proposal.get("target_phase", proposal.get("route_to_phase", ""))
-            if isinstance(proposal, dict)
-            else ""
-        ).strip().lower()
-        if target_phase and target_phase == "libraries":
-            return (
-                "Architecture decisions cannot route changes to libraries phase; "
-                "implement in architecture phase or block."
-            )
-
-        allowed_libraries = self._allowed_scope_libraries(str(getattr(decision_point, "scope", "")))
-        text_blob = self._candidate_text_blob(selected_candidate)
-        if any(
-            marker in text_blob
-            for marker in (
-                "create new library",
-                "new library",
-                "introduce new library",
-                "add new library",
-            )
-        ):
-            return (
-                "Committed architecture candidate requires new library creation, "
-                "which is outside architecture-phase authority."
-            )
-        if any(
-            marker in text_blob
-            for marker in (
-                "ownership change",
-                "change ownership",
-                "transfer ownership",
-                "move ownership",
-                "re-home",
-                "rehome",
-            )
-        ):
-            return (
-                "Committed architecture candidate requires shape ownership change, "
-                "which must be blocked with diagnostics."
-            )
-
-        referenced_libraries = self._extract_referenced_libraries(text_blob)
-        if allowed_libraries and referenced_libraries and not referenced_libraries.issubset(
-            allowed_libraries
-        ):
-            return (
-                "Committed architecture candidate references libraries outside the scoped "
-                f"ownership boundary: allowed={sorted(allowed_libraries)} "
-                f"referenced={sorted(referenced_libraries)}."
-            )
-        return ""
-
-    @staticmethod
-    def _candidate_text_blob(candidate: Any) -> str:
-        fragments: list[str] = []
-        for key in (
-            "scope",
-            "decision_id",
-            "trace",
-            "assumptions",
-            "decision_requirements",
-        ):
-            value = getattr(candidate, key, None)
-            if value is None:
-                continue
-            if isinstance(value, list):
-                fragments.extend(str(item).strip() for item in value if str(item).strip())
-            else:
-                text = str(value).strip()
-                if text:
-                    fragments.append(text)
-        proposal = getattr(candidate, "proposal", None)
-        if proposal is not None:
-            try:
-                fragments.append(json.dumps(proposal, sort_keys=True))
-            except (TypeError, ValueError):
-                fragments.append(str(proposal))
-        return " ".join(fragments).lower()
-
-    @staticmethod
-    def _allowed_scope_libraries(scope: str) -> set[str]:
-        allowed: set[str] = set()
-        intra_scope = ArchitecturePlannerStrategy._parse_intra_scope(scope)
-        if intra_scope is not None:
-            allowed.add(intra_scope[0].lower())
-            return allowed
-        inter_scope = ArchitecturePlannerStrategy._parse_inter_scope(scope)
-        if inter_scope is not None:
-            allowed.add(inter_scope[0].lower())
-            allowed.add(inter_scope[1].lower())
-        return allowed
-
-    @staticmethod
-    def _extract_referenced_libraries(text_blob: str) -> set[str]:
-        matches: set[str] = set()
-        for match in re.findall(r"libraries/([a-zA-Z0-9_.-]+)", text_blob):
-            normalized = str(match).strip().lower()
-            if normalized:
-                matches.add(normalized)
-        for match in re.findall(r"intra:([a-zA-Z0-9_.-]+)", text_blob):
-            normalized = str(match).strip().lower()
-            if normalized:
-                matches.add(normalized)
-        for source, target in re.findall(
-            r"inter:([a-zA-Z0-9_.-]+)->([a-zA-Z0-9_.-]+)", text_blob
-        ):
-            if source:
-                matches.add(source.strip().lower())
-            if target:
-                matches.add(target.strip().lower())
-        return matches
-
-    def _block_outcome_for_authority_violation(
-        self,
-        *,
-        decision_point: Any,
-        prior_outcome: DecisionOutcome,
-        diagnostic: str,
-    ) -> DecisionOutcome:
-        decision_id = str(getattr(decision_point, "decision_id", "")).strip()
-        requirement_token = f"architecture_authority:{decision_id or 'unknown'}"
-        under_spec_events = list(prior_outcome.under_spec_events)
-        under_spec_events.append(
-            {
-                "type": "architecture_out_of_authority",
-                "question": "Can this architecture decision be implemented in-place?",
-                "reason": diagnostic,
-                "detail": (
-                    "Architecture phase is forward-only and cannot perform ownership transfer "
-                    "or new-library creation routing."
-                ),
-                "scope": str(getattr(decision_point, "scope", "")).strip(),
-            }
-        )
-        return DecisionOutcome(
-            decision_id=decision_id,
-            committed=False,
-            selected_candidate_id=str(prior_outcome.selected_candidate_id),
-            wiring_intentions=[],
-            new_constraints=[],
-            under_spec_events=under_spec_events,
-            decision_requirements=self._dedupe_text_values(
-                [*prior_outcome.decision_requirements, requirement_token]
-            ),
-        )
-
     def _should_run(self, session: PlanningSession) -> bool:
-        """Check if this strategy should run: architecture phase + impact >= MEDIUM."""
-        # IMPL(single-layer): Replace `layer == "L2"` checks with
-        # `phase == "architecture"` while keeping the impact threshold gate.
-        phase = str(session.ctx.get("phase", "")).strip().lower()
-        if phase != _ARCHITECTURE_PHASE:
+        """Check if this strategy should run: L2 + impact >= MEDIUM."""
+        layer = session.ctx.get("layer", "L1").upper()
+        if layer != "L2":
             return False
         if session.impact is None:
             return False
@@ -741,13 +202,8 @@ class ArchitecturePlannerStrategy:
         slice_id: str,
         auth_constraints: list[Any],
         session: PlanningSession,
-        *,
-        routing: dict[str, Any],
     ) -> ScopePacket:
         """Build a ScopePacket with routed source artifacts for a decision point."""
-        # IMPL(single-layer): ScopePacket authority should come from shape ownership
-        # + shape contracts/verifier refs (Sections 9.1/7.2), not pin references or
-        # manifest-only routing assumptions.
         source_artifacts: dict[str, Any] = {}
         arch_refs: list[str] = []
 
@@ -774,28 +230,6 @@ class ArchitecturePlannerStrategy:
         if isinstance(evidence_status, dict):
             source_artifacts["evidence_status"] = dict(evidence_status)
 
-        source_artifacts["shape_authority"] = {
-            "shape_id": str(routing.get("shape_id", "")).strip(),
-            "contract_ids": [
-                str(item).strip()
-                for item in routing.get("contract_ids", [])
-                if str(item).strip()
-            ],
-            "verifier_ids": [
-                str(item).strip()
-                for item in routing.get("verifier_ids", [])
-                if str(item).strip()
-            ],
-            "mapping_status": str(routing.get("mapping_status", "")).strip(),
-            "mapping_reason": str(routing.get("mapping_reason", "")).strip(),
-            "owner_slice_id": str(routing.get("owner_slice_id", "")).strip()
-            or str(slice_id).strip(),
-            "shape_package": str(routing.get("shape_package", "")).strip(),
-            "shape_source_path": str(routing.get("shape_source_path", "")).strip(),
-        }
-
-        # IMPL(single-layer): Decision metadata persisted downstream should include
-        # `shape_id` and `contract_ids` on the outcome/work-item path.
         return ScopePacket(
             decision_id=dp.decision_id,
             scope=dp.scope,
@@ -942,7 +376,7 @@ class ArchitecturePlannerStrategy:
             if callable(self._evidence_tool):
                 raw = self._evidence_tool(
                     query=query,
-                    phase=_ARCHITECTURE_PHASE,
+                    layer="l2",
                     ctx_metadata=ctx,
                 )
             elif hasattr(self._evidence_tool, "search"):
@@ -1368,178 +802,59 @@ class ArchitecturePlannerStrategy:
     # Coordination: WorkItems + WaitGraph (Fixes 4, 6)
     # ------------------------------------------------------------------
 
-    def _create_work_items(
-        self,
-        decision_points: list[Any],
-        slice_id: str,
-        run_id: str,
-        decision_routing: dict[str, dict[str, Any]],
-    ) -> None:
+    def _create_work_items(self, decision_points: list[Any], slice_id: str) -> None:
         """Create ARCH_DECISION work items for each decision point."""
-        # IMPL(single-layer): Work item writes should use create/upsert semantics
-        # so repeated decision routing merges evidence/contract refs deterministically.
         if self._work_item_store is None:
             return
 
         from spec_manager.orchestration.coordination.work_items import WorkItem
 
         for dp in decision_points:
-            decision_id = str(getattr(dp, "decision_id", "")).strip()
-            if not decision_id:
-                continue
-            routing = decision_routing.get(decision_id, {})
-            payload = self._build_arch_decision_work_item_payload(
-                decision_point=dp,
-                slice_id=slice_id,
-                run_id=run_id,
-                routing=routing,
+            existing = self._work_item_store.get(dp.decision_id)
+            if existing is not None:
+                continue  # Already tracked
+
+            wi = WorkItem(
+                work_item_id=dp.decision_id,
+                spec_text=dp.description,
+                owner_slice_id=dp.owner_slice_id or slice_id,
                 status="OPEN",
+                kind="ARCH_DECISION",
+                scope=dp.scope,
+                trigger_refs=list(dp.trigger_evidence),
+                required_constraints=list(dp.required_constraints),
+                candidate_refs=[],
+                selected_candidate_ref="",
+                metadata={
+                    "decision_type": getattr(dp, "decision_type", ""),
+                    "scope": dp.scope,
+                },
             )
-            # IMPL(single-layer): Include routing metadata (`shape_id`,
-            # `created_in_phase='architecture'`, `required_change_type`,
-            # `evidence_refs`, `contract_ids`) in this payload path.
             try:
-                work_item = WorkItem.from_dict(payload)
-                existing = self._work_item_store.get(work_item.work_item_id)
-                if existing is None:
-                    self._work_item_store.create(work_item)
-                else:
-                    upsert_payload = work_item.to_dict()
-                    upsert_payload["status"] = self._transitionable_arch_status(
-                        current_status=str(getattr(existing, "status", "")).strip().upper(),
-                        desired_status="OPEN",
-                    )
-                    self._work_item_store.upsert(
-                        WorkItem.from_dict(upsert_payload),
-                        merge_policy="append_evidence",
-                    )
+                self._work_item_store.add(wi)
             except Exception:
                 logger.warning(
                     "Failed to create ARCH_DECISION work item %s",
-                    decision_id,
+                    dp.decision_id,
                     exc_info=True,
                 )
-
-    def _build_arch_decision_work_item_payload(
-        self,
-        *,
-        decision_point: Any,
-        slice_id: str,
-        run_id: str,
-        routing: dict[str, Any],
-        status: str,
-    ) -> dict[str, Any]:
-        decision_id = str(getattr(decision_point, "decision_id", "")).strip()
-        title = str(getattr(decision_point, "description", "")).strip() or (
-            f"Architecture decision {decision_id or 'unknown'}"
-        )
-        owner_slice_id = str(routing.get("owner_slice_id", "")).strip() or str(slice_id).strip()
-        shape_id = str(routing.get("shape_id", "")).strip() or owner_slice_id or "unmapped-shape"
-        contract_ids = self._dedupe_text_values(routing.get("contract_ids", []))
-        trigger_refs = self._dedupe_text_values(getattr(decision_point, "trigger_evidence", []))
-        evidence_refs = self._dedupe_text_values([*trigger_refs, *routing.get("evidence_refs", [])])
-        return {
-            "work_item_id": decision_id,
-            "run_id": run_id,
-            "slice_id": owner_slice_id,
-            "title": title,
-            "description": title,
-            "shape_id": shape_id,
-            "created_in_phase": _ARCHITECTURE_PHASE,
-            "required_change_type": "spec_change",
-            "status": status,
-            "kind": "ARCH_DECISION",
-            "priority": "high",
-            "file_locations": self._extract_file_locations(trigger_refs),
-            "evidence_refs": evidence_refs,
-            "contract_ids": contract_ids,
-            "verifier_ids": self._dedupe_text_values(routing.get("verifier_ids", [])),
-            "metadata": {
-                "decision_type": str(getattr(decision_point, "decision_type", "")).strip(),
-                "scope": str(getattr(decision_point, "scope", "")).strip(),
-                "mapping_status": str(routing.get("mapping_status", "")).strip() or "missing",
-                "mapping_reason": str(routing.get("mapping_reason", "")).strip(),
-                "lookup_refs": self._dedupe_text_values(routing.get("lookup_refs", [])),
-            },
-        }
-
-    @staticmethod
-    def _extract_file_locations(evidence_refs: list[str]) -> list[dict[str, Any]]:
-        locations: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for value in evidence_refs:
-            ref = str(value).strip()
-            if not ref:
-                continue
-            file_path = ref
-            line_start: int | None = None
-            if ":" in ref:
-                prefix, suffix = ref.rsplit(":", 1)
-                if suffix.isdigit():
-                    file_path = prefix.strip()
-                    line_start = int(suffix)
-            if not file_path or ("/" not in file_path and "\\" not in file_path):
-                continue
-            key = f"{file_path}:{line_start or ''}"
-            if key in seen:
-                continue
-            seen.add(key)
-            locations.append(
-                {
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "line_end": line_start,
-                    "symbol": None,
-                }
-            )
-        return locations
-
-    @staticmethod
-    def _transitionable_arch_status(current_status: str, desired_status: str) -> str:
-        current = str(current_status).strip().upper()
-        desired = str(desired_status).strip().upper()
-        if not desired:
-            return "OPEN"
-        if current == "DECIDED":
-            return "DECIDED"
-        if not current:
-            return desired
-        if current != desired:
-            return desired
-        if desired == "OPEN":
-            return "EXPLORING"
-        if desired == "EXPLORING":
-            return "OPEN"
-        return desired
 
     def _update_coordination(
         self,
         dp: Any,
         outcome: DecisionOutcome,
         slice_id: str,
-        *,
-        run_id: str,
-        routing: dict[str, Any],
     ) -> None:
         """Update work item status and add WaitGraph edges for blocked decisions."""
-        # IMPL(single-layer): Keep wait-graph integration, but blocked architecture
-        # decisions caused by missing shape routing must emit deterministic diagnostics
-        # and remain blocked (no cross-phase reroute).
         # Update work item status
         if self._work_item_store is not None:
             try:
-                desired_status = "EXPLORING"
                 if outcome.committed:
-                    desired_status = "DECIDED"
+                    self._work_item_store.update_status(dp.decision_id, "DECIDED")
                 elif outcome.under_spec_events or outcome.decision_requirements:
-                    desired_status = "BLOCKED"
-                self._upsert_arch_decision_status(
-                    decision_point=dp,
-                    slice_id=slice_id,
-                    run_id=run_id,
-                    routing=routing,
-                    status=desired_status,
-                )
+                    self._work_item_store.update_status(dp.decision_id, "BLOCKED")
+                else:
+                    self._work_item_store.update_status(dp.decision_id, "EXPLORING")
             except (KeyError, ValueError):
                 logger.debug(
                     "Could not update work item status for %s",
@@ -1588,7 +903,6 @@ class ArchitecturePlannerStrategy:
                     existing_edges.add((slice_id, provider_slice))
                 except CyclicDependencyError as exc:
                     self._handle_wait_cycle(
-                        run_id=run_id,
                         waiting_slice=slice_id,
                         provider_slice=provider_slice,
                         constraint_id=constraint_id,
@@ -1602,42 +916,6 @@ class ArchitecturePlannerStrategy:
                         provider_slice,
                         exc_info=True,
                     )
-
-    def _upsert_arch_decision_status(
-        self,
-        *,
-        decision_point: Any,
-        slice_id: str,
-        run_id: str,
-        routing: dict[str, Any],
-        status: str,
-    ) -> None:
-        if self._work_item_store is None:
-            return
-
-        from spec_manager.orchestration.coordination.work_items import WorkItem
-
-        payload = self._build_arch_decision_work_item_payload(
-            decision_point=decision_point,
-            slice_id=slice_id,
-            run_id=run_id,
-            routing=routing,
-            status=status,
-        )
-        incoming = WorkItem.from_dict(payload)
-        existing = self._work_item_store.get(incoming.work_item_id)
-        if existing is None:
-            self._work_item_store.create(incoming)
-            return
-        upsert_payload = incoming.to_dict()
-        upsert_payload["status"] = self._transitionable_arch_status(
-            current_status=str(getattr(existing, "status", "")).strip().upper(),
-            desired_status=status,
-        )
-        self._work_item_store.upsert(
-            WorkItem.from_dict(upsert_payload),
-            merge_policy="append_evidence",
-        )
 
     @staticmethod
     def _normalize_constraint_dependency_id(requirement: Any) -> str:
@@ -1665,7 +943,7 @@ class ArchitecturePlannerStrategy:
                 item = self._work_item_store.get(constraint_id)
             except Exception:
                 item = None
-            owner_slice_id = str(getattr(item, "slice_id", "")).strip() if item else ""
+            owner_slice_id = str(getattr(item, "owner_slice_id", "")).strip() if item else ""
             if owner_slice_id:
                 return owner_slice_id
 
@@ -1674,7 +952,6 @@ class ArchitecturePlannerStrategy:
     def _handle_wait_cycle(
         self,
         *,
-        run_id: str,
         waiting_slice: str,
         provider_slice: str,
         constraint_id: str,
@@ -1715,27 +992,18 @@ class ArchitecturePlannerStrategy:
         if self._work_item_store.get(work_item_id) is not None:
             return
 
-        title = (
-            f"Define interface stub for '{constraint_id}' to break wait-cycle "
-            + " -> ".join(cycle_path)
-        )
-        stub_payload = {
-            "work_item_id": work_item_id,
-            "run_id": run_id,
-            "slice_id": stub_owner_slice,
-            "title": title,
-            "description": title,
-            "shape_id": stub_owner_slice or provider_slice or waiting_slice or "cycle-break",
-            "created_in_phase": _ARCHITECTURE_PHASE,
-            "required_change_type": "spec_change",
-            "status": "NEW",
-            "kind": "SPEC_WORK",
-            "priority": "high",
-            "evidence_refs": self._dedupe_text_values(
-                [f"arch_decision:{decision_id}", f"constraint:{constraint_id}"]
+        stub_work_item = WorkItem(
+            work_item_id=work_item_id,
+            spec_text=(
+                f"Define a minimal interface-first stub for constraint '{constraint_id}' "
+                f"to break cycle {' -> '.join(cycle_path)}."
             ),
-            "contract_ids": [constraint_id],
-            "metadata": {
+            owner_slice_id=stub_owner_slice,
+            status="NEW",
+            kind="SPEC_WORK",
+            tags=["cycle_breaking", "interface_stub"],
+            required_constraints=[constraint_id],
+            metadata={
                 "source": "wait_graph_cycle",
                 "decision_id": decision_id,
                 "waiting_slice": waiting_slice,
@@ -1743,11 +1011,10 @@ class ArchitecturePlannerStrategy:
                 "cycle_path": cycle_path,
                 "monitor_required_status": "MERGED",
                 "monitor_kind": "work_item_status",
-                "tags": ["cycle_breaking", "interface_stub"],
             },
-        }
+        )
         try:
-            self._work_item_store.create(WorkItem.from_dict(stub_payload))
+            self._work_item_store.add(stub_work_item)
         except Exception:
             logger.warning(
                 "Failed to create cycle-breaking work item %s",

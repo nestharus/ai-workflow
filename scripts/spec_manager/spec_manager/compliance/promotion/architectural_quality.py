@@ -1,50 +1,3 @@
-# TODO(single-layer): RESTRUCTURE — These become "Architecture gates" (Section 10.1 group B).
-#   DELETE: check_no_inlined_atom_logic (atom/arch divide concept eliminated),
-#     check_pin_consumption_coverage, check_edge_realization (pin-dependent).
-#   REPLACE: check_arch_drift_pass → shape drift check (declared vs observed deps).
-#   KEEP/ADAPT: check_function_recomposition (if not pin-dependent),
-#     check_no_orphan_components, check_event_handler_coverage, check_config_externalization.
-#   Import boundary verification per shape is the new primary architecture gate.
-# ALGORITHM(single-layer):
-#   References: response3 Sections 10.1(B), 10.2, 6.3.
-#   Data structures:
-#     - ArchitectureGateContext: {shape_reports: dict[ShapeId, ShapeMatchReport], component_manifest: dict[str, Any]|None, analyzed_files: list[Any]|None}.
-#   Interface contracts:
-#     - Remove pin-only contracts: check_no_inlined_atom_logic, check_pin_consumption_coverage, check_edge_realization.
-#     - Add/rename:
-#       - def check_import_boundary_per_shape(...) -> GateCheckResult
-#       - def check_shape_drift_resolved(...) -> GateCheckResult
-#       - def check_function_recomposition(...), check_no_orphan_components(...), check_event_handler_coverage(...), check_config_externalization(...) remain with shape-aware inputs.
-#   Control flow:
-#     1. These gates run in the Architecture phase (phase='architecture').
-#     2. Three phases (Libraries -> Architecture -> Quality), forward-only; no cycling back.
-#     3. The Architecture phase edits code via its own PromotionLoop with IMPLEMENT step.
-#     4. Drive architecture checks from ShapeMatchReport deltas and declared contracts.
-#     5. Import boundary gate fails when observed dependency violates shape allow/deny policy.
-#     6. Shape drift gate fails when missing/unexpected dependencies remain unresolved.
-# IMPL(single-layer): Architecture drift/boundary checks should also treat matcher
-# `AMBIGUOUS` or `BLOCKED` statuses as deterministic gate failures (stale/unclear
-# routing evidence), not as pass or advisory-only outcomes.
-# IMPL(single-layer): Section 10.2 removes pin/atom architecture hard gates; keep
-# legacy pin-coupled checks here only as transitional code paths until orchestrator
-# and GateId wiring switch to shape-only architecture gates.
-# IMPL(single-layer): The target hard-gate API surface in this module is
-# `check_import_boundary_per_shape` + `check_shape_drift_resolved`, both driven by
-# matcher/verifier outputs instead of pin snapshots or pin registries.
-#     7. Keep deterministic architecture checks that do not depend on pins.
-#     8. Phase-local remediation if within Architecture authority; block if outside authority (no backtracking).
-#   Error handling:
-#     - Missing shape reports -> STALE_EVIDENCE failure.
-#     - LLM-only architecture findings become advisory diagnostics only.
-#   Integration points:
-#     - Called by compliance orchestrator architecture group during Architecture phase.
-#     - Architecture phase gates: shape matching + contract verifiers + integration tests (hard) + L2 reviewers (soft).
-#     - Consumes matcher output and shape verifier summaries.
-#   Test requirements:
-#     - Boundary violation fails gate.
-#     - Drift resolved passes only when deltas are empty.
-#     - Legacy pin-only functions are unreachable/removed.
-
 """Architectural quality checks for layer promotion gating.
 
 Verifies:
@@ -62,273 +15,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from spec_manager.compliance.promotion.config import GateId, GateSpec, PhaseId
+from spec_manager.compliance.promotion.config import GateId, GateSpec
 from spec_manager.compliance.promotion.result import GateCheckResult, GateStatus
 from spec_manager.core.code_analysis import RawFunctionInfo, analyze_source
 from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.formats import _strip_code_fences
-from spec_manager.routing.matcher import ShapeMatchReport
 from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
 if TYPE_CHECKING:
     from spec_manager.compliance.promotion.evidence_loader import AnalyzedFile
-
-
-@dataclass
-class ArchitectureGateContext:
-    shape_reports: dict[str, ShapeMatchReport]
-    component_manifest: dict[str, Any] | None
-    analyzed_files: list[Any] | None = None
-
-
-def _normalize_shape_dependency(raw: Any) -> str:
-    value = str(raw).strip().replace("\\", "/")
-    return value
-
-
-def _coerce_dependency_set(raw: Any) -> set[str]:
-    if raw is None:
-        return set()
-    if isinstance(raw, set) or isinstance(raw, (list, tuple)):
-        values = raw
-    elif isinstance(raw, dict):
-        values = raw.keys()
-    else:
-        values = [raw]
-    normalized = {_normalize_shape_dependency(item) for item in values}
-    return {value for value in normalized if value}
-
-
-def _normalize_match_status(raw: Any) -> str:
-    return str(raw or "").strip().upper()
-
-
-def _read_shape_report(report: ShapeMatchReport | dict[str, Any]) -> tuple[str, set[str], set[str], set[str], set[str]]:
-    if isinstance(report, ShapeMatchReport):
-        return (
-            _normalize_match_status(report.status),
-            _coerce_dependency_set(report.declared_dependencies),
-            _coerce_dependency_set(report.observed_dependencies),
-            _coerce_dependency_set(report.missing_dependencies),
-            _coerce_dependency_set(report.unexpected_dependencies),
-        )
-    if isinstance(report, dict):
-        status = _normalize_match_status(report.get("status"))
-        return (
-            status,
-            _coerce_dependency_set(report.get("declared_dependencies")),
-            _coerce_dependency_set(report.get("observed_dependencies")),
-            _coerce_dependency_set(report.get("missing_dependencies")),
-            _coerce_dependency_set(report.get("unexpected_dependencies")),
-        )
-    return "", set(), set(), set(), set()
-
-
-def _extract_shape_id(raw_id: Any) -> str:
-    return str(raw_id).strip()
-
-
-def _shape_reports_missing(context: ArchitectureGateContext) -> bool:
-    return not isinstance(context.shape_reports, dict) or not context.shape_reports
-
-
-def _shape_gate_stale_evidence(
-    gate_id: str,
-    phase: PhaseId,
-    gate_spec: GateSpec,
-    findings: list[dict[str, Any]],
-    duration: float,
-    summary: str,
-) -> GateCheckResult:
-    return GateCheckResult(
-        gate_id=gate_id,
-        mode=gate_spec.mode.value,
-        status=GateStatus.STALE_EVIDENCE,
-        score=0.0,
-        findings=findings,
-        summary=summary,
-        duration_ms=duration,
-        evidence_refs=[f"architecture-phase:{phase}"],
-    )
-
-
-# IMPL(single-layer): check_import_boundary_per_shape + check_shape_drift_resolved are the
-# primary deterministic architecture gates; use ShapeMatchReport deltas as authority.
-def check_import_boundary_per_shape(
-    context: ArchitectureGateContext,
-    gate_spec: GateSpec,
-    phase: PhaseId = "architecture",
-) -> GateCheckResult:
-    start_time = time.monotonic()
-    if _shape_reports_missing(context):
-        duration = (time.monotonic() - start_time) * 1000
-        return _shape_gate_stale_evidence(
-            gate_id=GateId.IMPORT_BOUNDARY_CHECK.value,
-            phase=phase,
-            gate_spec=gate_spec,
-            findings=[{"reason": "missing_shape_match_reports"}],
-            duration=duration,
-            summary="Shape match reports are required for import-boundary checking",
-        )
-
-    violations: list[dict[str, Any]] = []
-    blocked_reports: list[dict[str, Any]] = []
-    for raw_shape_id, raw_report in context.shape_reports.items():
-        shape_id = _extract_shape_id(raw_shape_id)
-        status, _, _, _, unexpected_dependencies = _read_shape_report(raw_report)
-        if status in {"AMBIGUOUS", "BLOCKED"}:
-            blocked_reports.append(
-                {
-                    "shape_id": shape_id or "unknown",
-                    "reason": "matcher_status_blocked_for_boundary_check",
-                    "status": status,
-                }
-            )
-            continue
-        if status not in {"MATCHED", "DRIFT"}:
-            blocked_reports.append(
-                {
-                    "shape_id": shape_id or "unknown",
-                    "reason": "invalid_match_status",
-                    "status": status,
-                }
-            )
-            continue
-        for dependency in sorted(unexpected_dependencies):
-            violations.append(
-                {
-                    "shape_id": shape_id or "unknown",
-                    "issue_type": "import_boundary_violation",
-                    "dependency": dependency,
-                }
-            )
-
-    duration = (time.monotonic() - start_time) * 1000
-    if blocked_reports:
-        findings = blocked_reports + violations
-        return _shape_gate_stale_evidence(
-            gate_id=GateId.IMPORT_BOUNDARY_CHECK.value,
-            phase=phase,
-            gate_spec=gate_spec,
-            findings=findings,
-            duration=duration,
-            summary=(
-                "Import boundary check could not complete due unresolved matcher evidence: "
-                f"{len(blocked_reports)} blocker(s)"
-            ),
-        )
-
-    if violations:
-        return GateCheckResult(
-            gate_id=GateId.IMPORT_BOUNDARY_CHECK.value,
-            mode=gate_spec.mode.value,
-            status=GateStatus.FAILED,
-            score=0.0,
-            findings=violations,
-            summary=f"Detected {len(violations)} import-boundary violations across matched shapes",
-            duration_ms=duration,
-            evidence_refs=[f"architecture-phase:{phase}"],
-        )
-
-    return GateCheckResult(
-        gate_id=GateId.IMPORT_BOUNDARY_CHECK.value,
-        mode=gate_spec.mode.value,
-        status=GateStatus.PASSED,
-        score=1.0,
-        findings=[],
-        summary="No import-boundary violations detected in shape reports",
-        duration_ms=duration,
-        evidence_refs=[f"architecture-phase:{phase}"],
-    )
-
-
-def check_shape_drift_resolved(
-    context: ArchitectureGateContext,
-    gate_spec: GateSpec,
-    phase: PhaseId = "architecture",
-) -> GateCheckResult:
-    start_time = time.monotonic()
-    if _shape_reports_missing(context):
-        duration = (time.monotonic() - start_time) * 1000
-        return _shape_gate_stale_evidence(
-            gate_id=GateId.SHAPE_DRIFT_RESOLVED.value,
-            phase=phase,
-            gate_spec=gate_spec,
-            findings=[{"reason": "missing_shape_match_reports"}],
-            duration=duration,
-            summary="Shape match reports are required to evaluate dependency drift",
-        )
-
-    blockers: list[dict[str, Any]] = []
-    findings: list[dict[str, Any]] = []
-    for raw_shape_id, raw_report in context.shape_reports.items():
-        shape_id = _extract_shape_id(raw_shape_id)
-        status, _, _, missing_dependencies, unexpected_dependencies = _read_shape_report(raw_report)
-        if status in {"AMBIGUOUS", "BLOCKED"}:
-            blockers.append(
-                {
-                    "shape_id": shape_id or "unknown",
-                    "reason": "matcher_status_blocking_drift_resolution",
-                    "status": status,
-                }
-            )
-            continue
-        if status not in {"MATCHED", "DRIFT"}:
-            blockers.append(
-                {
-                    "shape_id": shape_id or "unknown",
-                    "reason": "invalid_match_status",
-                    "status": status,
-                }
-            )
-            continue
-
-        if not missing_dependencies and not unexpected_dependencies:
-            continue
-        findings.append(
-            {
-                "shape_id": shape_id or "unknown",
-                "missing_dependencies": sorted(missing_dependencies),
-                "unexpected_dependencies": sorted(unexpected_dependencies),
-            }
-        )
-
-    duration = (time.monotonic() - start_time) * 1000
-    if blockers:
-        return _shape_gate_stale_evidence(
-            gate_id=GateId.SHAPE_DRIFT_RESOLVED.value,
-            phase=phase,
-            gate_spec=gate_spec,
-            findings=blockers + findings,
-            duration=duration,
-            summary=(
-                "Shape drift resolution could not complete due unresolved matcher status: "
-                f"{len(blockers)} blocker(s)"
-            ),
-        )
-
-    if findings:
-        return GateCheckResult(
-            gate_id=GateId.SHAPE_DRIFT_RESOLVED.value,
-            mode=gate_spec.mode.value,
-            status=GateStatus.FAILED,
-            score=0.0,
-            findings=findings,
-            summary="Dependency drift remains for one or more shapes",
-            duration_ms=duration,
-            evidence_refs=[f"architecture-phase:{phase}"],
-        )
-
-    return GateCheckResult(
-        gate_id=GateId.SHAPE_DRIFT_RESOLVED.value,
-        mode=gate_spec.mode.value,
-        status=GateStatus.PASSED,
-        score=1.0,
-        findings=[],
-        summary="No unresolved dependency drift remains in shape reports",
-        duration_ms=duration,
-        evidence_refs=[f"architecture-phase:{phase}"],
-    )
 
 
 @dataclass
@@ -479,9 +174,6 @@ def _collect_pin_span_texts(
     return span_by_pin_id
 
 
-# IMPL(single-layer): Legacy gate scheduled for removal (Section 10.2 "Eliminate"):
-# NO_INLINED_ATOM_LOGIC should be replaced by shape contract verifiers + quality
-# remediation work items, then deleted with its pin-span helper path.
 def check_no_inlined_atom_logic(
     pin_registry: PinFunctionRegistry,
     architectural_files: list[Path],
@@ -632,9 +324,6 @@ def check_no_inlined_atom_logic(
     )
 
 
-# IMPL(single-layer): KEEP/ADAPT gate. Recomposition checks should migrate from
-# `PinFunctionRegistry.import_edges` to shape-owned import/dependency evidence
-# (Section 6.3), while remaining strictly deterministic.
 def check_function_recomposition(
     pin_registry: PinFunctionRegistry,
     architectural_files: list[Path],
@@ -812,8 +501,6 @@ def check_function_recomposition(
     )
 
 
-# IMPL(single-layer): Section 10.2 explicitly eliminates PIN_CONSUMPTION_COVERAGE;
-# remove this gate and all call sites in the same migration change (no fallback path).
 def check_pin_consumption_coverage(
     pin_registry: PinFunctionRegistry,
     component_manifest: dict[str, Any],
@@ -852,8 +539,6 @@ def check_pin_consumption_coverage(
     )
 
 
-# IMPL(single-layer): Section 10.2 explicitly eliminates EDGE_REALIZATION as a
-# pin/component-manifest hard gate; replace with shape contract verifiers.
 def check_edge_realization(
     component_manifest: dict[str, Any],
     gate_spec: GateSpec,
@@ -921,8 +606,6 @@ def check_edge_realization(
     )
 
 
-# IMPL(single-layer): KEEP/ADAPT gate. Component orphan checks should align with
-# shape ownership + declared entrypoint contracts, not pin-consumption evidence.
 def check_no_orphan_components(
     component_manifest: dict[str, Any],
     gate_spec: GateSpec,
@@ -966,8 +649,6 @@ def check_no_orphan_components(
     )
 
 
-# IMPL(single-layer): KEEP/ADAPT gate. Event coverage remains deterministic only
-# when backed by declared shape contracts + verifier-linked evidence.
 def check_event_handler_coverage(
     component_manifest: dict[str, Any],
     gate_spec: GateSpec,
@@ -1015,8 +696,6 @@ def check_event_handler_coverage(
     )
 
 
-# IMPL(single-layer): Config checks can still emit diagnostics, but architecture
-# hard-gate convergence must rely on deterministic matcher/verifier evidence.
 def check_config_externalization(
     architectural_files: list[Path],
     gate_spec: GateSpec,
@@ -1184,9 +863,6 @@ def _llm_detect_hardcoded_config(
     return loaded
 
 
-# IMPL(single-layer): Legacy ARCH_DRIFT_PASS is manifest-hash based and should be
-# replaced by shape drift resolution (declared vs observed deps from matcher
-# reports); matcher `AMBIGUOUS`/`BLOCKED` must be treated as deterministic failure.
 def check_arch_drift_pass(
     component_manifest_path: Path | None,
     gate_spec: GateSpec,

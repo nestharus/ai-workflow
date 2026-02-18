@@ -758,15 +758,6 @@ class SkeletonSynthesisTransientParseError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-6.1/6.2]: Implement SkeletonSynthesisStrategy
-#   - LLM strategy that produces pre-decomposition skeleton artifacts
-#   - Input: problem_frame, concept_map, answered/open questions,
-#     constraint references (IDs only, not objects)
-#   - Output: SkeletonSpec with workflows, entities, interfaces
-#   - Depth: "one level deeper than names" — stubs with TODOs tied
-#     to question IDs, no business logic
-#   - Must NOT invent library boundaries (that's Phase 0's job)
-#   - Skeleton creation is incremental: revised as constraints arrive
 class SkeletonSynthesisStrategy:
     """LLM strategy to produce pre-decomposition skeleton spec.
 
@@ -1183,17 +1174,6 @@ class SkeletonSynthesisStrategy:
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-6.1]: Implement render_skeleton(spec, output_dir)
-#   - Takes a SkeletonSpec and renders the directory structure:
-#     system/intent.md — problem frame, scope, metrics, open Qs, constraint refs
-#     system/workflows/<name>.py — function/class stubs with TODO comments
-#     system/entities/<name>.py — entity stubs with field shapes
-#     system/interfaces/<name>.py — external boundary stubs
-#   - Workflow stubs must include TODO comments referencing question IDs:
-#     # Q:<question_id> (canonical_key: <key>)
-#     # Scenario: <scenario text>
-#     # TODO: finalize <aspect> based on user answer.
-#   - Must NOT embed constraint objects — only reference by ID
 def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
     """Render skeleton artifacts to the output directory.
 
@@ -1432,11 +1412,6 @@ def render_skeleton(spec: SkeletonSpec, output_dir: Path) -> list[Path]:
     return created
 
 
-# TODO [R2-6.3]: Implement render_intent_snapshot(state, queue, output_dir)
-#   - Renders analysis/intent/intent_snapshot.json containing:
-#     problem_frame, concept_map, queue open question IDs + canonical keys,
-#     references to planner-authored constraints/decisions by ID
-#   - Must NOT embed constraint objects
 def render_intent_snapshot(
     problem_frame: dict[str, Any],
     concept_map: dict[str, Any],

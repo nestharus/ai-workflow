@@ -1717,7 +1717,6 @@ class QuestionQueue:
 
         return llm_actions
 
-    # TODO [R2-2.1]: Implement enqueue(item) — add item after quality gate pass
     def enqueue(self, item: QuestionItem) -> None:
         """Add a quality-gate-passed item to the queue."""
         item.validate()
@@ -1734,21 +1733,11 @@ class QuestionQueue:
             item.timestamps["created_at"] = now
         self._items[item.question_id] = item
 
-    # TODO [R2-2.2]: Implement next_question() → QuestionItem | None
-    #   - Returns the highest-priority OPEN item
-    #   - Priority: deterministic base score from blockers/severity/scope/layer
-    #   - scoring formula (Section 2.2):
-    #     blocked_slices count, severity weight, scope_kind weight,
-    #     layer criticality, staleness penalty
     def next_question(self, run_agent: Any = None) -> QuestionItem | None:
         """Return the highest-priority OPEN question."""
         open_items, _ = self._rank_open_items(run_agent=run_agent)
         return open_items[0] if open_items else None
 
-    # TODO [R2-2.5]: Implement next_batch() → list[QuestionItem]
-    #   - Returns batch of 1-3 questions sharing same domain concern
-    #   - Default: single question. Batch only if same canonical_key prefix
-    #     + answering together reduces ambiguity + all pass quality gate
     def next_batch(self, run_agent: Any = None) -> list[QuestionItem]:
         """Return the next batch of questions to present together."""
         top = self.next_question(run_agent=run_agent)
@@ -1977,11 +1966,6 @@ class QuestionQueue:
             return False
         return self._set_status(item, new_status, reason)
 
-    # TODO [R2-2.4]: Implement dedup(new_item) → QuestionItem | None
-    #   - Tier 1: same canonical_key → merge origins/blockers, keep best prompt
-    #   - Tier 2: same decision_requirement_id → merge
-    #   - Tier 3: semantic LLM match among same taxonomy_type + scope_kind
-    #   - Returns existing item if duplicate, None if unique
     def dedup(self, new_item: QuestionItem, *, run_agent: Any = None) -> QuestionItem | None:
         """Check if new_item duplicates an existing question."""
         if new_item.canonical_key:
@@ -2072,10 +2056,6 @@ class QuestionQueue:
             existing.user_prompt = self._clone_user_prompt(new_item.user_prompt)
         existing.timestamps["updated_at"] = datetime.now(UTC).isoformat()
 
-    # TODO [R2-2.6]: Implement mark_stale() — staleness sweep
-    #   - STALE if no blocked slices + not HIGH_RISK
-    #   - STALE if superseded by problem redefinition
-    #   - STALE if Planner recorded constraint/decision making it irrelevant
     def mark_stale(
         self,
         question_ids: set[str] | None = None,
@@ -2111,7 +2091,6 @@ class QuestionQueue:
                     stale_ids.append(item.question_id)
         return stale_ids
 
-    # TODO [R2-2.1]: Implement mark_answered(question_id, planner_constraint_ids)
     def mark_answered(self, question_id: str, reason: str = "") -> bool:
         """Mark a question as ANSWERED."""
         item = self._items.get(question_id)
@@ -2143,7 +2122,6 @@ class QuestionQueue:
         """Get a question by ID."""
         return self._items.get(question_id)
 
-    # TODO [R2-2.1]: Implement save(run_dir) → writes question_queue.json
     def save(self, run_dir: Path) -> Path:
         """Persist queue snapshot."""
         out_dir = _question_queue_snapshot_dir(run_dir)
@@ -2166,7 +2144,6 @@ class QuestionQueue:
 
         return out_path
 
-    # TODO [R2-2.1]: Implement load(run_dir) classmethod
     @classmethod
     def load(cls, run_dir: Path) -> QuestionQueue:
         """Load queue from snapshot."""

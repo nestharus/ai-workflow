@@ -1,3 +1,4 @@
+# TODO(single-layer): DELETE — Tests for pin coverage checker which is DELETE'd.
 """Tests for pin coverage checker."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# TODO(single-layer): DELETE — Tests for PinRegistry which is DELETE'd.
 """Tests for PinRegistry: forward/backward trace, drift, and persistence."""
 
 from __future__ import annotations

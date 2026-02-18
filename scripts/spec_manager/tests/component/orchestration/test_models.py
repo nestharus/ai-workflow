@@ -6,7 +6,7 @@ navigation, and all dataclass result types.
 
 from __future__ import annotations
 
-from spec_manager.orchestration.models import (
+from spec_manager.core.layer_types import (
     LAYER_ORDER,
     BatchResult,
     Layer,

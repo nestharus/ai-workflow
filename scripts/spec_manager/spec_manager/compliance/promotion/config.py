@@ -1,53 +1,10 @@
-# TODO(single-layer): RESTRUCTURE — GateId enum loses PIN_COVERAGE, PIN_CONSUMPTION_COVERAGE,
-#   EDGE_REALIZATION, NO_INLINED_ATOM_LOGIC, ARCH_DRIFT_PASS (all pin/layer-dependent).
-#   Gains: SHAPE_VERIFIERS_PASS, IMPORT_BOUNDARY_CHECK, SHAPE_DRIFT_RESOLVED.
-#   Merge TESTS_PASS into ALL_TESTS_PASS — single unified hard gate (Section 10.2).
-#   GateMode and GateSeverity KEEP. GateSpec KEEP but per-layer config eliminated.
-#   Section 10.1 defines the three aspect gate groups.
-# ALGORITHM(single-layer):
-#   References: response3 Section 10.2.
-#   Data structures:
-#     - PhaseId = Literal['libraries', 'architecture', 'quality'] — three-phase forward-only pipeline.
-#     - GateId enum must include: NO_REMAINING_COMMENTS, NO_STUB_FUNCTIONS, ALL_TESTS_PASS, CALL_GRAPH_CONNECTED, STORE_MONOGAMY, FUNCTION_RECOMPOSITION, NO_ORPHAN_COMPONENTS, EVENT_HANDLER_COVERAGE, CONFIG_EXTERNALIZATION, SHAPE_VERIFIERS_PASS, IMPORT_BOUNDARY_CHECK, SHAPE_DRIFT_RESOLVED, PROVENANCE_COMPLETE, ENTITY_COVERAGE.
-#     - Remove: PIN_COVERAGE, PIN_CONSUMPTION_COVERAGE, EDGE_REALIZATION, NO_INLINED_ATOM_LOGIC, ARCH_DRIFT_PASS, TEST_PIN_ALIGNMENT.
-#     - GateSpec keeps mode/severity/threshold/params; PromotionGateConfig keeps single global gate map (no per-layer config).
-#     - Gates organized by aspect, run within three phases. Some hard verifiers
-#       (ALL_TESTS_PASS, contract verifiers) are required in multiple phases:
-#       - Libraries phase: library verifiers + ALL_TESTS_PASS (hard) + LLM gap scans (soft).
-#       - Architecture phase: shape matching + contract verifiers + integration tests + ALL_TESTS_PASS (hard) + L2 reviewers (soft).
-#       - Quality phase: ALL_TESTS_PASS + all contract verifiers + style checks (hard) + quality reviewers (soft).
-#       - Gate execution policy maps gate → list of phases it applies to (not 1:1).
-# IMPL(single-layer): Keep `INTRODUCED_ALGORITHM_SPECS` phase policy aligned with
-# `introduction_checker` ALGORITHM (Libraries + Architecture) once the gate is fully
-# shape/verifier-driven and no longer pin-coverage-coupled.
-#   Interface contracts:
-#     - def default() -> PromotionGateConfig sets deterministic hard gates required and advisory defaults for soft signals.
-#     - def get_gate(gate_id: GateId) -> GateSpec
-#   Control flow:
-#     1. Define severity map for new gate IDs.
-#     2. Merge TESTS_PASS semantics into ALL_TESTS_PASS.
-#     3. Assign advisory mode to CALL_GRAPH_CONNECTED and NO_STUB_FUNCTIONS by default.
-#     4. Each phase runs its own PromotionLoop with IMPLEMENT step — all phases edit code.
-#     5. Phases are forward-only (Libraries -> Architecture -> Quality); no backtracking.
-#     6. Phase-local remediation if within authority; block if outside authority.
-#   Error handling:
-#     - Unknown gate_id in loaded config -> ignore with warning or raise strict error based on policy flag.
-#   Integration points:
-#     - Used by compliance orchestrator and demotion triage routing table.
-#     - Gate-to-phase mapping: gate → list of phases
-#       (not 1:1; e.g. ALL_TESTS_PASS runs in all phases).
-#   Test requirements:
-#     - Enum contents exactly match new policy.
-#     - Default mode/severity mapping is stable.
-#     - Legacy gate IDs fail fast or are dropped deterministically.
-
 """Configuration schema for promotion gates and core enums."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 
 def _default_test_command() -> list[str]:
@@ -75,80 +32,52 @@ class GateSeverity(Enum):
 class GateId(Enum):
     """Identifiers for each promotion gate check."""
 
-    # IMPL(single-layer): GateId enum removes pin/layer-dependent gates:
-    #   PIN_COVERAGE, PIN_CONSUMPTION_COVERAGE, EDGE_REALIZATION,
-    #   NO_INLINED_ATOM_LOGIC, ARCH_DRIFT_PASS, TEST_PIN_ALIGNMENT.
-    #   Adds SHAPE_VERIFIERS_PASS, IMPORT_BOUNDARY_CHECK, SHAPE_DRIFT_RESOLVED.
-    #   TESTS_PASS is fully merged into ALL_TESTS_PASS.
     # Additional evidence gates
     NO_REMAINING_COMMENTS = "no_remaining_comments"
     NO_STUB_FUNCTIONS = "no_stub_functions"
     ALL_TESTS_PASS = "all_tests_pass"
     CALL_GRAPH_CONNECTED = "call_graph_connected"
     STORE_MONOGAMY = "store_monogamy"
+    PIN_COVERAGE = "pin_coverage"
     INTRODUCED_ALGORITHM_SPECS = "introduced_algorithm_specs"
 
     # L2 primary gates
+    NO_INLINED_ATOM_LOGIC = "no_inlined_atom_logic"
     FUNCTION_RECOMPOSITION = "function_recomposition"
+    PIN_CONSUMPTION_COVERAGE = "pin_consumption_coverage"
+    EDGE_REALIZATION = "edge_realization"
     NO_ORPHAN_COMPONENTS = "no_orphan_components"
     EVENT_HANDLER_COVERAGE = "event_handler_coverage"
     CONFIG_EXTERNALIZATION = "config_externalization"
-    SHAPE_VERIFIERS_PASS = "shape_verifiers_pass"
-    IMPORT_BOUNDARY_CHECK = "import_boundary_check"
-    SHAPE_DRIFT_RESOLVED = "shape_drift_resolved"
+    ARCH_DRIFT_PASS = "arch_drift_pass"
 
     # Extended gates
     PROVENANCE_COMPLETE = "provenance_complete"
     ENTITY_COVERAGE = "entity_coverage"
-
-
-# IMPL(single-layer): PhaseId is now a first-class type in config.py so gate policy
-# and orchestration callers can share one forward-only phase vocabulary.
-PhaseId = Literal["libraries", "architecture", "quality"]
-ALL_PHASES: tuple[PhaseId, PhaseId, PhaseId] = ("libraries", "architecture", "quality")
-
-# IMPL(single-layer): Replaces implicit layer-specific gate tables with a single
-# gate execution policy: each gate maps to one or more phases it runs in.
-GATE_PHASES: dict[GateId, tuple[PhaseId, ...]] = {
-    GateId.NO_REMAINING_COMMENTS: ("quality",),
-    GateId.NO_STUB_FUNCTIONS: ("libraries", "architecture", "quality"),
-    GateId.ALL_TESTS_PASS: ALL_PHASES,
-    GateId.CALL_GRAPH_CONNECTED: ("libraries", "architecture"),
-    GateId.STORE_MONOGAMY: ("libraries", "architecture", "quality"),
-    # IMPL(single-layer): Expand to ("libraries", "architecture") when
-    # introduced-algorithm compliance migrates to deterministic diff + shape/verifier
-    # evidence and can run in both phases without pin registry inputs.
-    GateId.INTRODUCED_ALGORITHM_SPECS: ("libraries",),
-    GateId.FUNCTION_RECOMPOSITION: ("architecture", "quality"),
-    GateId.NO_ORPHAN_COMPONENTS: ("architecture", "quality"),
-    GateId.EVENT_HANDLER_COVERAGE: ("architecture", "quality"),
-    GateId.CONFIG_EXTERNALIZATION: ("architecture", "quality"),
-    GateId.SHAPE_VERIFIERS_PASS: ALL_PHASES,
-    GateId.IMPORT_BOUNDARY_CHECK: ALL_PHASES,
-    GateId.SHAPE_DRIFT_RESOLVED: ("libraries", "architecture"),
-    GateId.PROVENANCE_COMPLETE: ("architecture", "quality"),
-    GateId.ENTITY_COVERAGE: ("quality",),
-}
+    TEST_PIN_ALIGNMENT = "test_pin_alignment"
 
 
 def _default_severity(gate_id: GateId) -> GateSeverity:
     """Return the spec-level default severity for a gate."""
     mapping: dict[GateId, GateSeverity] = {
+        GateId.NO_INLINED_ATOM_LOGIC: GateSeverity.BLOCKER,
         GateId.FUNCTION_RECOMPOSITION: GateSeverity.BLOCKER,
+        GateId.PIN_CONSUMPTION_COVERAGE: GateSeverity.MAJOR,
+        GateId.EDGE_REALIZATION: GateSeverity.MAJOR,
         GateId.NO_ORPHAN_COMPONENTS: GateSeverity.MAJOR,
         GateId.EVENT_HANDLER_COVERAGE: GateSeverity.MAJOR,
         GateId.CONFIG_EXTERNALIZATION: GateSeverity.MINOR,
-        GateId.SHAPE_VERIFIERS_PASS: GateSeverity.BLOCKER,
-        GateId.IMPORT_BOUNDARY_CHECK: GateSeverity.BLOCKER,
-        GateId.SHAPE_DRIFT_RESOLVED: GateSeverity.BLOCKER,
+        GateId.ARCH_DRIFT_PASS: GateSeverity.MAJOR,
         GateId.NO_REMAINING_COMMENTS: GateSeverity.BLOCKER,
         GateId.NO_STUB_FUNCTIONS: GateSeverity.BLOCKER,
         GateId.ALL_TESTS_PASS: GateSeverity.MAJOR,
         GateId.CALL_GRAPH_CONNECTED: GateSeverity.MAJOR,
         GateId.STORE_MONOGAMY: GateSeverity.MAJOR,
+        GateId.PIN_COVERAGE: GateSeverity.MAJOR,
         GateId.INTRODUCED_ALGORITHM_SPECS: GateSeverity.MAJOR,
         GateId.PROVENANCE_COMPLETE: GateSeverity.MAJOR,
         GateId.ENTITY_COVERAGE: GateSeverity.MINOR,
+        GateId.TEST_PIN_ALIGNMENT: GateSeverity.MINOR,
     }
     return mapping.get(gate_id, GateSeverity.MAJOR)
 
@@ -201,8 +130,6 @@ class PromotionGateConfig:
         project_root: Root of the project being analyzed.
     """
 
-    # IMPL(single-layer): This remains a single global gate map; per-layer gate
-    # configuration tables are removed in favor of GATE_PHASES.
     gates: dict[GateId, GateSpec] = field(default_factory=dict)
     algorithmic_roots: list[str] = field(
         default_factory=lambda: [
@@ -238,15 +165,11 @@ class PromotionGateConfig:
         config = cls()
         for gate_id in GateId:
             config.gates[gate_id] = GateSpec(gate_id=gate_id)
-        # IMPL(single-layer): ALL_TESTS_PASS is hard/required across all phases.
-        config.gates[GateId.ALL_TESTS_PASS].mode = GateMode.REQUIRED
-        # Call graph connectivity and stub scanning are advisory routing signals.
+        # Tests and call graph connectivity are advisory by default.
+        config.gates[GateId.ALL_TESTS_PASS].mode = GateMode.ADVISORY
         config.gates[GateId.CALL_GRAPH_CONNECTED].mode = GateMode.ADVISORY
-        config.gates[GateId.NO_STUB_FUNCTIONS].mode = GateMode.ADVISORY
-        # Shape/import verifiers are hard/required defaults.
-        config.gates[GateId.SHAPE_VERIFIERS_PASS].mode = GateMode.REQUIRED
-        config.gates[GateId.IMPORT_BOUNDARY_CHECK].mode = GateMode.REQUIRED
-        config.gates[GateId.SHAPE_DRIFT_RESOLVED].mode = GateMode.REQUIRED
         # Entity coverage is advisory by default (new gate, not blocking).
         config.gates[GateId.ENTITY_COVERAGE].mode = GateMode.ADVISORY
+        # Test-pin alignment is advisory by default (early warning signal).
+        config.gates[GateId.TEST_PIN_ALIGNMENT].mode = GateMode.ADVISORY
         return config

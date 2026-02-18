@@ -1,84 +1,3 @@
-# TODO(single-layer): RESTRUCTURE — The 10-step state machine concept survives but
-#   layer-aware dispatch is eliminated. Key changes:
-#   - Remove Layer-dependent step dispatch (the L1/L2/L3 dispatch matrix in MEMORY.md)
-#   - Remove DownwardFlowEngine integration (pin-based backward trace)
-#   - Remove DemotionManager/DemotionTicket cross-layer routing
-#   - Remove _DISABLE_L1_GAP_SCAN_KEY, _L3_REVIEWERS_CONFIG_KEY layer-specific config
-#   - GAP step: phase-aware gap detection — Libraries: algorithmic gaps; Architecture:
-#     wiring/contract gaps; Quality: refactoring opportunities
-#   - PLAN step: phase-aware intention planning — Libraries: code+test intentions;
-#     Architecture: wiring/adapter intentions; Quality: refactor intentions
-#   - IMPLEMENT step: ALL phases edit code via PromotionLoop IMPLEMENT (not Build-only)
-#     Libraries: create/edit code+tests; Architecture: wiring, contracts, adapters, and
-#     algorithm edits in-place; Quality: extract helpers, rename, restructure files
-#   - PROMOTE step: aspect gates mapped to active phase (not layer gates)
-#   - VERIFY step: shape verifier checks replace governance+lineage/topology/closure
-#   - Work items (shape_id as routing handle) replace pin-based propagation (Section 8)
-#   - Phase-local remediation: within authority → fix locally; outside authority → BLOCK
-#     (no demotion-to-layer, no re-triage to earlier phase)
-#   - The state machine loop with bounded convergence (Section 9.3) is the right pattern
-# ALGORITHM(single-layer):
-#   References: response3 Sections 8, 9.1, 9.2, 9.3, 10, 11.
-#   Data structures:
-#     - Keep step result dataclasses; replace layer fields with phase: PhaseId.
-#     - LoopContext: {run_id: str, slice_id: str, iteration_index: int, active_phase: PhaseId, shape_scope: list[ShapeId], pending_work_items: list[WorkItem]}.
-#   Interface contracts:
-#     - def run_slice(self, slice_ref: SliceRef, run_context: RunContext) -> SliceResult
-#     - def _execute_step(self, step_name: str, ctx: LoopContext) -> StepResult
-#     - def _emit_work_items(self, findings: list[dict[str, Any]], source_phase: PhaseId) -> list[WorkItem]
-#   Control flow:
-#     1. Preserve 10-step state machine shell, but step semantics become phase-aware (not layer-aware).
-#     2. IMPLEMENT step runs in ALL phases — each phase edits code via its PromotionLoop:
-#        Libraries (L1 behaviors): create/edit code + tests within library boundaries.
-#        Architecture (L2 behaviors): wiring, components, contracts, adapters; can edit algorithm implementations in-place; cannot create new libraries or change ownership.
-#        Quality (L3 behaviors): refactoring only (extract helpers, rename, restructure); cannot change behavior (tests + contract verifiers must stay green).
-#     3. PROMOTE step runs aspect gates mapped to active phase, not layer gates.
-#     4. VERIFY step runs shape verifiers and matcher drift checks; failures create phase-local remediation work items if within authority, or BLOCK if outside authority (no demotion-to-layer).
-#     5. COORDINATE/ANALYZE steps keep diagnostics and hint generation, but cannot declare convergence.
-#     6. DONE decision uses deterministic signals only (verifiers/tests/work item emptiness).
-#     7. Phase-local remediation or block: if a finding is within the active phase's authority, handle it; if not, BLOCK (never demote to an earlier phase).
-#   Error handling:
-#     - Removed dependencies (DownwardFlowEngine, pin demotion) must hard-fail if still referenced.
-#     - Ambiguous target from hints emits coordination block signal.
-#     - Out-of-authority finding triggers BLOCK with diagnostics (not demotion).
-#   Integration points:
-#     - Called by lifecycle per-slice scheduler (once per phase, with phase-appropriate behaviors).
-#     - Calls planner/api, implementation runner, compliance orchestrator, routing matcher/verifiers.
-# IMPL(single-layer): PROMOTE-step gate orchestration should consume the public
-# `spec_manager.compliance.promotion` exports so gate-class renames roll out
-# without submodule-level compatibility aliases.
-# IMPL(single-layer): PROMOTE must treat orchestrator `STALE_EVIDENCE` failures on
-# required deterministic gates and non-ship hard-stop outcomes as terminal blocks,
-# not demotion/retry signals.
-# IMPL(single-layer): Architecture-review prompt assembly should consume
-# `PatternLibrary` contract dimensions/templates (EVENT_FLOW, DI_BINDING,
-# MIDDLEWARE_ORDERING) and surface missing-verifier-template coverage as
-# deterministic contract work items before convergence checks.
-# IMPL(single-layer): Routing/finding registration should persist work via
-# `WorkItemStore.create/upsert` with `shape_id` + `created_in_phase=active_phase`
-# + `required_change_type`; phase-local remediation checks should read
-# `list_open(phase=active_phase, shape_id=...)` (no cross-phase reroute).
-# IMPL(single-layer): IMPLEMENT-step integration with
-# `implementation.runner.ImplementationRunner.run_for_slice` should pass
-# `phase=active_phase`, shape execution scope (shape_id + allowed files), and
-# active-phase work items; consume runner-emitted completion metadata to close
-# only the corresponding phase-local work items.
-# IMPL(single-layer): When the architecture planner returns incomplete topology
-# evidence (`discovery_status='incomplete'` / missing deterministic discovery
-# inputs), PLAN/VERIFY handling should emit phase-local BLOCK diagnostics rather
-# than demotion, retry loops, or cross-phase rerouting.
-# IMPL(single-layer): As `orchestration.demotion` shifts from `apply()` patching to
-# `escalate()` work-item persistence, remove PromotionLoop demotion-apply/commit paths
-# in the same change and consume QUEUED/BLOCKED escalation outcomes only.
-# IMPL(single-layer): Planner-provided monitor payload normalization/registration should
-# preserve the `coordination.monitors` condition schema (shape-aware + bounds/convergence
-# fields) so `condition_from_dict` can deserialize without lossy field drops.
-#   Test requirements:
-#     - Step dispatch is independent of L1/L2/L3 but phase-aware (Libraries/Architecture/Quality).
-#     - VERIFY failure yields phase-local remediation or BLOCK, not layer demotion ticket.
-#     - IMPLEMENT runs in all three phases with appropriate behaviors.
-#     - Convergence loop respects iteration caps from lifecycle.
-
 """Per-slice iterative PromotionLoop.
 
 Replaces the sequential P0-P10 pipeline with a per-slice loop that
@@ -139,47 +58,20 @@ from time import monotonic
 from types import SimpleNamespace
 from typing import Any, Literal, Protocol, cast
 
-# IMPL(single-layer): These layer/demotion/downward-flow imports are migration seams.
-# As Section 11 lands, replace them with phase/work-item contracts and fail hard on
-# leftover pin-trace dependencies instead of keeping compatibility adapters.
-from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.core.layer_types import Layer
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
+from spec_manager.orchestration.downward_flow.engine import DownwardFlowEngine, FailureEvidence
 from spec_manager.orchestration.evidence import EvidenceBundle
 from spec_manager.schemas.lineage import RelationshipFacts
 
 logger = logging.getLogger(__name__)
 
 
-_DISABLE_LIBRARY_GAP_SCAN_KEY = "disable_library_gap_scan"
+_DISABLE_L1_GAP_SCAN_FIELD = "disable_l1_gap_scan"
 _QUALITY_RECEIPTS_FILENAME = "quality.receipts.json"
-_QUALITY_REVIEWERS_CONFIG_KEY = "quality_reviewers"
+_L3_REVIEWERS_CONFIG_FIELD = "l3_reviewers"
 InteractionMode = Literal["interactive", "auto"]
 LifecycleRunMode = Literal["build", "qa", "architecture", "code_quality"]
-
-_PHASE_TO_LAYER: dict[PhaseId, Layer] = {
-    "libraries": "l1",
-    "architecture": "l2",
-    "quality": "l3",
-}
-_LAYER_TO_PHASE: dict[Layer, PhaseId] = {
-    "l1": "libraries",
-    "l2": "architecture",
-    "l3": "quality",
-}
-
-
-def _normalize_phase(value: Any, *, fallback: PhaseId = "libraries") -> PhaseId:
-    raw = str(value).strip().lower()
-    if raw in _PHASE_TO_LAYER:
-        return cast("PhaseId", raw)
-    if raw in _LAYER_TO_PHASE:
-        return _LAYER_TO_PHASE[cast("Layer", raw)]
-    return fallback
-
-
-def _legacy_layer_for_phase(phase: PhaseId) -> Layer:
-    return _PHASE_TO_LAYER[phase]
 
 
 @dataclass(frozen=True)
@@ -301,8 +193,9 @@ def _hash_text(content: str) -> str:
     return _hash_bytes(content.encode("utf-8"))
 
 
-def _gate_source_for_phase(phase: PhaseId) -> Literal["ALGORITHMIC_GATE", "ARCH_GATE"]:
-    if phase == "libraries":
+def _gate_source_for_layer(layer: str) -> Literal["ALGORITHMIC_GATE", "ARCH_GATE"]:
+    normalized = str(layer).strip().upper()
+    if normalized == "L1":
         return "ALGORITHMIC_GATE"
     return "ARCH_GATE"
 
@@ -1048,7 +941,7 @@ def _configured_l3_review_pack(
     if not isinstance(config, dict):
         return default_pack
 
-    configured = config.get(_QUALITY_REVIEWERS_CONFIG_KEY)
+    configured = config.get(_L3_REVIEWERS_CONFIG_FIELD)
     if not isinstance(configured, list) or not configured:
         return default_pack
 
@@ -1185,8 +1078,6 @@ class StepResult:
 
     status: Literal["OK", "RETRY", "BLOCKED", "FAIL", "WAITING"] = "OK"
     bundle_path: str = ""
-    # IMPL(single-layer): Replace DemotionTicket transport with phase-local
-    # work-item escalation outcomes (QUEUED/BLOCKED) once Section 11 migration lands.
     emitted_tickets: list[DemotionTicket] = field(default_factory=list)
     notes_path: str | None = None
     error: str = ""
@@ -1207,20 +1098,10 @@ class SliceRef:
     """Reference to a slice of work."""
 
     slice_id: str
-    # IMPL(single-layer): Replace legacy layer key with shared `PhaseId`
-    # (libraries/architecture/quality) for lifecycle and routing contracts.
-    active_phase: PhaseId = "libraries"
     layer: Layer = "l1"
     library_id: str = ""
     worktree_path: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        phase_value: Any = self.active_phase
-        if self.active_phase == "libraries" and self.layer != "l1":
-            phase_value = self.layer
-        self.active_phase = _normalize_phase(phase_value, fallback=_normalize_phase(self.layer))
-        self.layer = _legacy_layer_for_phase(self.active_phase)
 
 
 @dataclass
@@ -1232,28 +1113,14 @@ class RunContext:
     lifecycle_mode: LifecycleRunMode = "build"
     workspace_root: str = ""
     max_iterations: int = 20
-    # IMPL(single-layer): Replace per-layer caps with phase-local bounds from
-    # run_state (`max_iterations_per_slice`, `stagnation_window`).
-    max_iterations_by_phase: dict[PhaseId, int] = field(
-        default_factory=lambda: {
-            "libraries": 20,
-            "architecture": 30,
-            "quality": 15,
-        }
+    max_iterations_by_layer: dict[str, int] = field(
+        default_factory=lambda: {"l1": 20, "l2": 30, "l3": 15}
     )
-    max_iterations_by_layer: dict[str, int] = field(default_factory=dict)
     max_wait_cycles: int = 10
     config: dict[str, Any] = field(default_factory=dict)
     ci_tick_callback: Callable[[str], dict[str, Any] | None] | None = None
     ci_periodic_tick_callback: Callable[[], None] | None = None
     ci_periodic_tick_interval_sec: float = 20.0
-
-    def __post_init__(self) -> None:
-        if self.max_iterations_by_layer:
-            translated: dict[PhaseId, int] = {}
-            for layer_name, value in self.max_iterations_by_layer.items():
-                translated[_normalize_phase(layer_name)] = int(value)
-            self.max_iterations_by_phase.update(translated)
 
 
 @dataclass
@@ -1272,9 +1139,6 @@ class SliceContext:
     slice_root: str = ""  # grandchild worktree path
     dirty_parent_root: str = ""
     clean_sibling_root: str = ""
-    # IMPL(single-layer): Promote this field to `active_phase: PhaseId` and carry
-    # shape/work-item scope in loop context so routing/remediation stays phase-local.
-    active_phase: PhaseId = "libraries"
     layer: Layer = "l1"
     run_id: str = ""
     mode: InteractionMode = "auto"
@@ -1287,13 +1151,6 @@ class SliceContext:
     worktree_manager: Any | None = None
     workspace_manager: Any | None = None
     branch_manager: Any | None = None
-
-    def __post_init__(self) -> None:
-        phase_value: Any = self.active_phase
-        if self.active_phase == "libraries" and self.layer != "l1":
-            phase_value = self.layer
-        self.active_phase = _normalize_phase(phase_value, fallback=_normalize_phase(self.layer))
-        self.layer = _legacy_layer_for_phase(self.active_phase)
 
 
 @dataclass
@@ -1312,8 +1169,6 @@ class SliceResult:
     ] = "COMPLETE"
     iterations: int = 0
     remaining_gaps: int = 0
-    # IMPL(single-layer): Replace demotion ticket output with deterministic
-    # phase-local work-item/escalation diagnostics consumed by lifecycle convergence.
     demotion_tickets: list[DemotionTicket] = field(default_factory=list)
     blocked_questions: list[str] = field(default_factory=list)
     pending_signals: list[dict] = field(default_factory=list)
@@ -1321,21 +1176,6 @@ class SliceResult:
     last_signal_id: str = ""
     wake_payload: dict[str, Any] = field(default_factory=dict)
     error: str = ""
-
-
-@dataclass
-class LoopContext:
-    """Loop execution context passed into phase-aware step dispatch."""
-
-    run_id: str
-    slice_id: str
-    iteration_index: int
-    active_phase: PhaseId
-    shape_scope: list[str] = field(default_factory=list)
-    pending_work_items: list[Any] = field(default_factory=list)
-    slice_ctx: SliceContext | None = None
-    bundle: EvidenceBundle | None = None
-    step: LoopStep | None = None
 
 
 # ------------------------------------------------------------------
@@ -2214,7 +2054,7 @@ class GapExplorationStep:
             self._merge_gap_queue(self._report_from_gap_records(normalized), bundle)
             return StepResult(status="OK")
 
-        if bool(ctx.config.get(_DISABLE_LIBRARY_GAP_SCAN_KEY, False)):
+        if bool(ctx.config.get(_DISABLE_L1_GAP_SCAN_FIELD, False)):
             bundle.gaps = GapReportRef(path="gaps.json", open_gaps=[])
             self._merge_gap_queue(self._report_from_gap_records([]), bundle)
             return StepResult(status="OK")
@@ -3235,8 +3075,6 @@ class ImplementStep:
         """Dispatch to layer-specific implementation and emit evidence atomically."""
         from spec_manager.orchestration.evidence import ImplementationRef
 
-        # IMPL(single-layer): IMPLEMENT runs in every phase from phase-local work items;
-        # non-libraries phases should not become no-op solely due to legacy intentions shape.
         # L1 runs even without intentions (uses gaps directly).
         # L2/L3 need explicit intentions from the planner.
         if ctx.layer != "l1" and not bundle.plan.intentions:
@@ -3613,12 +3451,9 @@ class ImplementStep:
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
 
         try:
-            from spec_manager.orchestration.coordination.work_items import WorkItemStore
             from spec_manager.orchestration.implementation.runner import (
                 ImplementationRunner,
-                PhaseExecutionScope,
             )
-            from spec_manager.routing import load_shape_pack
 
             runner = ImplementationRunner(
                 workspace_root=workspace,
@@ -3666,41 +3501,6 @@ class ImplementStep:
                     candidate = workspace / candidate
                 constraints_paths.append(candidate)
 
-            work_item_store = WorkItemStore(
-                workspace / ".pdd_runs" / ctx.run_id / "coordination"
-            )
-            phase_work_items = [
-                item
-                for item in work_item_store.list_open(phase=ctx.active_phase)
-                if item.slice_id == ctx.slice_id
-            ]
-            phase_scope: PhaseExecutionScope | None = None
-            if phase_work_items:
-                shape_id = str(phase_work_items[0].shape_id).strip()
-                allowed_files: set[str] = set()
-                if shape_id:
-                    try:
-                        shape_index = load_shape_pack(workspace)
-                        shape = shape_index.shapes.get(cast("Any", shape_id))
-                        if shape is not None:
-                            allowed_files = {
-                                str(path).strip()
-                                for path in shape.files
-                                if str(path).strip()
-                            }
-                    except Exception as exc:
-                        logger.debug("Failed to resolve shape scope for IMPLEMENT: %s", exc)
-                if shape_id and allowed_files:
-                    phase_scope = PhaseExecutionScope(
-                        shape_id=cast("Any", shape_id),
-                        allowed_files=allowed_files,
-                        work_item_ids=[
-                            str(item.work_item_id)
-                            for item in phase_work_items
-                            if str(item.shape_id) == shape_id
-                        ],
-                    )
-
             run_result = runner.run_for_slice(
                 slice_root=slice_root,
                 slice_id=ctx.slice_id,
@@ -3709,9 +3509,6 @@ class ImplementStep:
                 plan_path=plan_path,
                 gaps_path=gaps_path,
                 constraints_paths=constraints_paths,
-                phase=ctx.active_phase,
-                phase_scope=phase_scope,
-                work_items=phase_work_items,
             )
 
             pin_proposals = (
@@ -3770,26 +3567,6 @@ class ImplementStep:
                         "location": {"file": file_path},
                     }
                 )
-
-            completed_work_item_ids: set[str] = set()
-            for edit in run_result.applied_edits:
-                if not isinstance(edit, dict):
-                    continue
-                raw_ids = edit.get("work_item_ids", [])
-                if not isinstance(raw_ids, list):
-                    continue
-                for item_id in raw_ids:
-                    normalized_id = str(item_id).strip()
-                    if normalized_id:
-                        completed_work_item_ids.add(normalized_id)
-            if completed_work_item_ids:
-                for item in work_item_store.list_open(phase=ctx.active_phase):
-                    if item.slice_id != ctx.slice_id:
-                        continue
-                    if str(item.work_item_id) not in completed_work_item_ids:
-                        continue
-                    item.status = "MERGED"
-                    work_item_store.upsert(item, merge_policy="append_evidence")
 
             bundle.implementation = ImplementationRef(
                 patch_path=run_result.patch_path,
@@ -3993,22 +3770,22 @@ class ImplementStep:
                 if not isinstance(item, dict):
                     continue
                 target_raw = str(item.get("target_layer", "L1")).strip().upper()
-                target: PhaseId = "architecture" if target_raw == "L2" else "libraries"
+                target = "L2" if target_raw == "L2" else "L1"
                 reason = (
                     str(item.get("reason", "")).strip() or "L3 refactor requires lower-layer change"
                 )
                 file_path = str(item.get("file", "")).strip()
                 severity = str(item.get("severity", "")).strip().upper()
                 if severity not in {"BLOCKER", "MAJOR", "MINOR"}:
-                    severity = "BLOCKER" if target == "libraries" else "MAJOR"
+                    severity = "BLOCKER" if target == "L1" else "MAJOR"
                 demotion_tickets.append(
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
-                        source="ALGORITHMIC_GATE" if target == "libraries" else "ARCH_GATE",
-                        origin_phase="quality",
-                        hop_trace=["quality", target],
-                        target_phase=target,
+                        source="ALGORITHMIC_GATE" if target == "L1" else "ARCH_GATE",
+                        origin_layer="L3",
+                        hop_trace=["L3", target],
+                        target_layer=target,
                         severity=severity,
                         diagnosis=reason,
                         failing_files=[file_path] if file_path else [],
@@ -4564,53 +4341,16 @@ class CoordinateStep:
             return 0
 
         from spec_manager.orchestration.coordination.work_items import WorkItem, WorkItemStore
-        from spec_manager.routing import load_shape_pack, resolve_shape_for_file
 
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
         coordination_dir = workspace / ".pdd_runs" / ctx.run_id / "coordination"
         store = WorkItemStore(coordination_dir)
-        shape_index = None
-        try:
-            shape_index = load_shape_pack(workspace)
-        except Exception as exc:
-            logger.debug("Failed to load shape pack for routing items: %s", exc)
-
         added = 0
         for payload in routing:
             if not isinstance(payload, dict):
                 continue
-            normalized_payload = dict(payload)
-            normalized_payload.setdefault("run_id", ctx.run_id)
-            normalized_payload.setdefault("slice_id", ctx.slice_id)
-            normalized_payload.setdefault("created_in_phase", ctx.active_phase)
-            if not normalized_payload.get("required_change_type"):
-                normalized_payload["required_change_type"] = "refactor_only"
-
-            shape_id = str(normalized_payload.get("shape_id", "")).strip()
-            if not shape_id and shape_index is not None:
-                locations = normalized_payload.get("file_locations")
-                file_candidates: list[str] = []
-                if isinstance(locations, list):
-                    for item in locations:
-                        if isinstance(item, dict):
-                            file_path = str(item.get("file_path") or item.get("file") or "").strip()
-                            if file_path:
-                                file_candidates.append(file_path)
-                if not file_candidates:
-                    legacy_location = normalized_payload.get("location")
-                    if isinstance(legacy_location, dict):
-                        file_path = str(legacy_location.get("file") or "").strip()
-                        if file_path:
-                            file_candidates.append(file_path)
-                for file_path in file_candidates:
-                    resolved = resolve_shape_for_file(file_path, shape_index)
-                    if resolved:
-                        shape_id = str(resolved)
-                        break
-                if shape_id:
-                    normalized_payload["shape_id"] = shape_id
             try:
-                work_item = WorkItem.from_dict(normalized_payload)
+                work_item = WorkItem.from_dict(payload)
             except ValueError as exc:
                 logger.warning(
                     "Skipping invalid routed work item payload for %s: %s",
@@ -4620,12 +4360,15 @@ class CoordinateStep:
                 continue
             if not work_item.work_item_id:
                 continue
-            existing = store.get(work_item.work_item_id)
-            if existing is None:
-                store.create(work_item)
-                added += 1
+            if not work_item.owner_slice_id:
+                work_item.owner_slice_id = ctx.slice_id
+            if not work_item.status:
+                work_item_kind = str(work_item.kind).strip().upper()
+                work_item.status = "OPEN" if work_item_kind == "ARCH_DECISION" else "NEW"
+            if store.get(work_item.work_item_id) is not None:
                 continue
-            store.upsert(work_item, merge_policy="append_evidence")
+            store.add(work_item)
+            added += 1
         return added
 
     @staticmethod
@@ -4686,72 +4429,6 @@ class CoordinateStep:
                 ).strip(),
                 "constraint_id": str(condition.get("constraint_id", "")).strip(),
                 "slice_id": str(condition.get("slice_id", "")).strip() or slice_id,
-            }
-        if raw_type == "shape_verifiers_pass":
-            shape_id = str(condition.get("shape_id", "")).strip()
-            if not shape_id:
-                return {}
-            return {
-                "type": "shape_verifiers_pass",
-                "shape_id": shape_id,
-            }
-        if raw_type == "shape_dependency_clean":
-            shape_id = str(condition.get("shape_id", "")).strip()
-            if not shape_id:
-                return {}
-            policy = str(condition.get("policy", "declared_superset")).strip() or "declared_superset"
-            return {
-                "type": "shape_dependency_clean",
-                "shape_id": shape_id,
-                "policy": policy,
-            }
-        if raw_type == "iteration_cap":
-            phase = _normalize_phase(condition.get("phase", "libraries"))
-            max_iterations = condition.get("max_iterations", 20)
-            try:
-                max_iterations_int = max(int(max_iterations), 1)
-            except (TypeError, ValueError):
-                max_iterations_int = 20
-            return {
-                "type": "iteration_cap",
-                "phase": phase,
-                "slice_id": str(condition.get("slice_id", "")).strip() or slice_id,
-                "max_iterations": max_iterations_int,
-            }
-        if raw_type == "work_item_cap":
-            phase = _normalize_phase(condition.get("phase", "libraries"))
-            max_work_items = condition.get("max_work_items", 50)
-            try:
-                max_work_items_int = max(int(max_work_items), 1)
-            except (TypeError, ValueError):
-                max_work_items_int = 50
-            return {
-                "type": "work_item_cap",
-                "phase": phase,
-                "max_work_items": max_work_items_int,
-            }
-        if raw_type == "stagnation":
-            phase = _normalize_phase(condition.get("phase", "libraries"))
-            verifier_id = str(condition.get("verifier_id", "")).strip()
-            if not verifier_id:
-                return {}
-            window = condition.get("window", 2)
-            try:
-                window_int = max(int(window), 1)
-            except (TypeError, ValueError):
-                window_int = 2
-            return {
-                "type": "stagnation",
-                "phase": phase,
-                "slice_id": str(condition.get("slice_id", "")).strip() or slice_id,
-                "verifier_id": verifier_id,
-                "window": window_int,
-            }
-        if raw_type == "phase_convergence":
-            phase = _normalize_phase(condition.get("phase", "libraries"))
-            return {
-                "type": "phase_convergence",
-                "phase": phase,
             }
         return {}
 
@@ -4851,7 +4528,7 @@ class CoordinateStep:
                     action="WAKE_SLICE",
                     payload={
                         "slice_id": ctx.slice_id,
-                        "phase": ctx.active_phase,
+                        "layer": ctx.layer,
                         "signal_id": normalized_signal_id,
                         "kind": str(payload.get("kind", "")).strip(),
                         "artifact_key": str(payload.get("artifact_key", "")).strip(),
@@ -5655,8 +5332,6 @@ class PromoteStep:
         if mechanics.status != "OK":
             return mechanics
 
-        # IMPL(single-layer): PROMOTE should execute aspect gates keyed by active phase
-        # and treat required-gate stale evidence/non-ship outcomes as terminal BLOCK.
         if ctx.layer == "l1":
             result = self._promote_l1(ctx, bundle)
         elif ctx.layer == "l2":
@@ -6118,16 +5793,16 @@ class PromoteStep:
         )
 
         if governance_failures:
-            current_phase = ctx.active_phase
+            current_layer = self._current_layer_literal(ctx.layer)
             ticket = DemotionTicket(
                 run_id=ctx.run_id,
                 slice_id=ctx.slice_id,
-                source=_gate_source_for_phase(current_phase),
+                source=_gate_source_for_layer(current_layer),
                 category="governance",
                 gate="DIRTY_TO_CLEAN_GOVERNANCE",
-                origin_phase=current_phase,
-                hop_trace=[current_phase, current_phase],
-                target_phase=current_phase,
+                origin_layer=current_layer,
+                hop_trace=[current_layer, current_layer],
+                target_layer=current_layer,
                 severity="BLOCKER",
                 diagnosis="; ".join(governance_failures[:5]),
                 evidence_refs=[bundle.promotion.path] if bundle.promotion.path else [],
@@ -6496,15 +6171,6 @@ class PromoteStep:
 
         for reviewer in L2_REVIEW_PACK:
             pattern_section = pattern_lib.get_review_prompt_section(reviewer.dimension)
-            contract_template_section = "\n\n".join(
-                section
-                for section in (
-                    pattern_lib.get_review_prompt_section("CONTRACT_EVENT_FLOW"),
-                    pattern_lib.get_review_prompt_section("CONTRACT_DI_BINDING"),
-                    pattern_lib.get_review_prompt_section("CONTRACT_MIDDLEWARE_ORDERING"),
-                )
-                if section.strip()
-            )
             reviewer_prompt = (
                 "## TASK\n"
                 f"Review this L2 architecture slice for {reviewer.dimension}.\n"
@@ -6518,7 +6184,6 @@ class PromoteStep:
                 "- expected\n"
                 "- location {file, symbol?, start_line?, end_line?}\n\n"
                 f"{pattern_section}\n\n"
-                f"{contract_template_section}\n\n"
                 "## EVIDENCE\n"
                 f"{json.dumps(review_payload, indent=2)}\n\n"
                 'Return JSON: {"findings": [...]}.\n'
@@ -6995,9 +6660,9 @@ class PromoteStep:
                         slice_id=ctx.slice_id,
                         source="ALGORITHMIC_GATE",
                         gate="EVIDENCE_INTEGRITY",
-                        origin_phase="libraries",
-                        hop_trace=["libraries", "libraries"],
-                        target_phase="libraries",
+                        origin_layer="L1",
+                        hop_trace=["L1", "L1"],
+                        target_layer="L1",
                         severity="BLOCKER",
                         diagnosis="; ".join(failures),
                     )
@@ -7008,11 +6673,8 @@ class PromoteStep:
 
     def _promote_l2(self, ctx: SliceContext, bundle: EvidenceBundle) -> StepResult:
         """L2: run canonical promotion gates as EvidenceBundle queries."""
-        from spec_manager.compliance import promotion as promotion_api
-
-        # IMPL(single-layer): Consume promotion gates via the package export boundary
-        # (`spec_manager.compliance.promotion`) as aspect gates replace LayerPromotionGate.
-        from spec_manager.compliance.promotion.result import GateStatus
+        from spec_manager.compliance.promotion.config import PromotionGateConfig
+        from spec_manager.compliance.promotion.orchestrator import LayerPromotionGate
         from spec_manager.schemas.pin_functions import PinFunctionRegistry
 
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
@@ -7029,21 +6691,10 @@ class PromoteStep:
             except Exception as exc:
                 logger.debug("Failed to load pin registry for L2 gates: %s", exc)
 
-        gate_cls = (
-            getattr(promotion_api, "PromotionGate", None)
-            or getattr(promotion_api, "AspectPromotionGate", None)
-            or getattr(promotion_api, "LayerPromotionGate", None)
-        )
-        if gate_cls is None:
-            return StepResult(
-                status="FAIL",
-                error="PROMOTE failed: no promotion gate class exported by compliance package",
-            )
-
-        config = promotion_api.PromotionGateConfig.default()
+        config = PromotionGateConfig.default()
         config.project_root = str(slice_root)
 
-        gate = gate_cls(
+        gate = LayerPromotionGate(
             config=config,
             evidence_bundle=bundle,
             pin_registry=pin_registry,
@@ -7061,38 +6712,6 @@ class PromoteStep:
         ]
         bundle.gates.path = "gates.report.json"
 
-        required_stale_failures = [
-            result
-            for result in report.gate_results
-            if str(result.mode).strip().lower() == "required"
-            and (
-                result.status == GateStatus.STALE_EVIDENCE
-                or str(getattr(result.status, "value", result.status)).strip().lower()
-                == GateStatus.STALE_EVIDENCE.value
-            )
-        ]
-        non_ship_hard_stops = [
-            result
-            for result in report.gate_results
-            if str(result.gate_id).strip() == "non_ship_policy"
-            and not bool(result.passed)
-        ]
-        # IMPL(single-layer): PROMOTE must treat orchestrator `STALE_EVIDENCE` failures on
-        # required deterministic gates and non-ship hard-stop outcomes as terminal blocks,
-        # not demotion/retry signals.
-        if required_stale_failures or non_ship_hard_stops:
-            stale_ids = ", ".join(str(result.gate_id) for result in required_stale_failures)
-            non_ship_ids = ", ".join(str(result.gate_id) for result in non_ship_hard_stops)
-            details = []
-            if stale_ids:
-                details.append(f"required stale evidence gates: {stale_ids}")
-            if non_ship_ids:
-                details.append(f"non-ship hard stop: {non_ship_ids}")
-            return StepResult(
-                status="BLOCKED",
-                error="; ".join(details) or "Promotion blocked by deterministic gate policy",
-            )
-
         architecture_graph = self._load_l2_architecture_graph(ctx, bundle)
         arch_files = [
             str(path).strip()
@@ -7102,64 +6721,6 @@ class PromoteStep:
         workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
         arch_artifacts = GapExplorationStep._load_arch_artifacts(workspace, arch_files)
         component_manifest = _load_run_component_manifest(workspace, bundle.run_id)
-        contract_template_findings: list[dict[str, Any]] = []
-        try:
-            from spec_manager.orchestration.coordination.work_items import (
-                WorkItem,
-                WorkItemStore,
-            )
-            from spec_manager.orchestration.pattern_library import PatternLibrary
-            from spec_manager.routing import load_shape_pack
-
-            pattern_lib = PatternLibrary(
-                library_path=GapExplorationStep._pattern_library_path(workspace)
-            )
-            shape_index = load_shape_pack(workspace)
-            contract_template_findings = pattern_lib.validate_contract_pattern_coverage(shape_index)
-            if contract_template_findings:
-                store = WorkItemStore(PromotionLoop._coordination_dir_for(ctx))
-                for idx, finding in enumerate(contract_template_findings):
-                    shape_id = str(finding.get("shape_id", "")).strip()
-                    if not shape_id:
-                        continue
-                    work_item_id = hashlib.sha256(
-                        (
-                            f"{ctx.run_id}|{ctx.slice_id}|{ctx.active_phase}|contract-template|"
-                            f"{shape_id}|{finding.get('contract_id', '')}|{idx}"
-                        ).encode()
-                    ).hexdigest()[:16]
-                    item = WorkItem(
-                        work_item_id=work_item_id,
-                        run_id=ctx.run_id,
-                        slice_id=ctx.slice_id,
-                        title="Contract Template Coverage",
-                        description=str(finding.get("message", "Missing contract coverage")).strip(),
-                        shape_id=cast("Any", shape_id),
-                        created_in_phase=ctx.active_phase,
-                        required_change_type=cast(
-                            "Any",
-                            str(finding.get("required_change_type") or "spec_change"),
-                        ),
-                        status="NEW",
-                        evidence_refs=[
-                            str(item_ref).strip()
-                            for item_ref in finding.get("evidence_refs", [])
-                            if str(item_ref).strip()
-                        ]
-                        if isinstance(finding.get("evidence_refs"), list)
-                        else [],
-                        metadata={
-                            "source": "pattern_library.validate_contract_pattern_coverage",
-                            "template_id": str(finding.get("template_id", "")).strip(),
-                            "contract_id": str(finding.get("contract_id", "")).strip(),
-                            "contract_kind": str(finding.get("contract_kind", "")).strip(),
-                            "finding": str(finding.get("finding", "")).strip(),
-                        },
-                    )
-                    store.upsert(item, merge_policy="append_evidence")
-        except Exception as exc:
-            logger.warning("Contract template coverage validation failed: %s", exc, exc_info=True)
-
         review_findings = self._run_l2_review_pack(
             ctx=ctx,
             bundle=bundle,
@@ -7167,29 +6728,6 @@ class PromoteStep:
             arch_artifacts=arch_artifacts,
             component_manifest=component_manifest,
         )
-        if contract_template_findings:
-            review_findings.extend(
-                [
-                    {
-                        "kind": "contract_template_coverage",
-                        "reviewer": "pattern-library",
-                        "agent_name": "pattern-library",
-                        "dimension": "CONTRACT_TEMPLATE_COVERAGE",
-                        "component_id": str(finding.get("shape_id", "")).strip(),
-                        "anchor": str(finding.get("contract_id", "")).strip(),
-                        "file": "",
-                        "location": {"file": ""},
-                        "description": str(finding.get("message", "")).strip(),
-                        "expected": "Contract templates must provide deterministic verifier coverage.",
-                        "severity": str(finding.get("severity", "BLOCKER")).upper(),
-                        "required_change_type": str(
-                            finding.get("required_change_type") or "spec_change"
-                        ),
-                    }
-                    for finding in contract_template_findings
-                    if isinstance(finding, dict)
-                ]
-            )
 
         findings_by_reviewer: dict[str, list[dict[str, Any]]] = {}
         for finding in review_findings:
@@ -7229,31 +6767,15 @@ class PromoteStep:
                 )
             )
 
-        if contract_template_findings:
-            bundle.gates.gates.append(
-                self._to_gate(
-                    gate_id="contract_template_coverage",
-                    passed=False,
-                    summary=(
-                        f"{len(contract_template_findings)} contract template verifier coverage "
-                        "finding(s) remain unresolved"
-                    ),
-                    required_change_type="spec_change",
-                )
-            )
-
         if review_findings:
             normalized_review_gaps = [self._l2_finding_to_gap(item) for item in review_findings]
             bundle.gaps.open_gaps = normalized_review_gaps
 
         failed_gates = [gate for gate in bundle.gates.gates if not gate.get("passed")]
-        # IMPL(single-layer): Failed architecture gates should emit shape-keyed phase
-        # work items (required_change_type preserved) and BLOCK on deterministic hard-stop
-        # states, replacing L2->L1 demotion ticket routing.
         if not failed_gates:
             return StepResult(status="OK")
 
-        current_phase = ctx.active_phase
+        current_layer = self._current_layer_literal(ctx.layer)
         gap_records = [gap for gap in bundle.gaps.open_gaps if isinstance(gap, dict)]
         failing_files = sorted(
             {
@@ -7309,9 +6831,9 @@ class PromoteStep:
                 source="ARCH_GATE",
                 category="logic",
                 gate=str(gate.get("gate_id", "")),
-                origin_phase=current_phase,
-                hop_trace=[current_phase, "libraries"],
-                target_phase="libraries",
+                origin_layer=current_layer,
+                hop_trace=[current_layer, "L1"],
+                target_layer="L1",
                 severity="BLOCKER",
                 diagnosis=str(gate.get("summary", "L2 behavior-change gate failed")),
                 failing_files=failing_files,
@@ -7331,9 +6853,9 @@ class PromoteStep:
                     source="ARCH_GATE",
                     category="governance",
                     gate=str(gate.get("gate_id", "")),
-                    origin_phase=current_phase,
-                    hop_trace=[current_phase, current_phase],
-                    target_phase=current_phase,
+                    origin_layer=current_layer,
+                    hop_trace=[current_layer, current_layer],
+                    target_layer=current_layer,
                     severity="BLOCKER",
                     diagnosis=str(gate.get("summary", "L2 governance gate failed")),
                     failing_files=failing_files,
@@ -7351,7 +6873,7 @@ class PromoteStep:
             error_parts.append(f"{wiring_failures} wiring-only gate(s) require L2 retry")
         if behavior_change_failures:
             error_parts.append(
-                f"{len(behavior_change_failures)} gate(s) require behavior-change escalation"
+                f"{len(behavior_change_failures)} gate(s) require L1 behavior-change demotion"
             )
         if governance_failures:
             error_parts.append(
@@ -7440,8 +6962,6 @@ class PromoteStep:
         bundle.gates.path = "gates.report.json"
 
         if quality_findings or actionable_diff or unresolved_diff:
-            # IMPL(single-layer): Quality-phase behavior or wiring findings are
-            # out-of-authority block diagnostics unless classified as refactor-local.
             tickets: list[DemotionTicket] = []
             for finding in quality_findings:
                 category = str(finding.get("category", "style")).strip().lower()
@@ -7451,9 +6971,9 @@ class PromoteStep:
                             run_id=ctx.run_id,
                             slice_id=ctx.slice_id,
                             source="REVIEW",
-                            origin_phase="quality",
-                            hop_trace=["quality", "libraries"],
-                            target_phase="libraries",
+                            origin_layer="L3",
+                            hop_trace=["L3", "L1"],
+                            target_layer="L1",
                             severity=str(finding.get("severity", "MAJOR")).upper(),
                             diagnosis=str(
                                 finding.get("description", "Quality finding requires logic change")
@@ -7477,9 +6997,9 @@ class PromoteStep:
                             run_id=ctx.run_id,
                             slice_id=ctx.slice_id,
                             source="REVIEW",
-                            origin_phase="quality",
-                            hop_trace=["quality", "architecture"],
-                            target_phase="architecture",
+                            origin_layer="L3",
+                            hop_trace=["L3", "L2"],
+                            target_layer="L2",
                             severity=str(finding.get("severity", "MAJOR")).upper(),
                             diagnosis=str(
                                 finding.get(
@@ -7501,18 +7021,18 @@ class PromoteStep:
                     )
             for finding in actionable_diff:
                 impact_type = str(finding.get("impact_type", "")).strip().lower()
-                target: PhaseId = "libraries" if impact_type == "logic" else "architecture"
+                target = "L1" if impact_type == "logic" else "L2"
                 severity = str(finding.get("severity", "BLOCKER")).upper()
                 if severity not in {"BLOCKER", "MAJOR", "MINOR"}:
-                    severity = "BLOCKER" if target == "libraries" else "MAJOR"
+                    severity = "BLOCKER" if target == "L1" else "MAJOR"
                 tickets.append(
                     DemotionTicket(
                         run_id=ctx.run_id,
                         slice_id=ctx.slice_id,
                         source="REVIEW",
-                        origin_phase="quality",
-                        hop_trace=["quality", target],
-                        target_phase=target,
+                        origin_layer="L3",
+                        hop_trace=["L3", target],
+                        target_layer=target,
                         severity=severity,
                         diagnosis=str(
                             finding.get(
@@ -7591,13 +7111,9 @@ class PromoteStep:
         if failed:
             tickets = []
             for gate in failed:
-                target: PhaseId = (
-                    "libraries"
-                    if gate["required_change_type"] == "behavior_change"
-                    else "architecture"
-                )
+                target = "L1" if gate["required_change_type"] == "behavior_change" else "L2"
                 if gate["required_change_type"] == "refactor_only":
-                    target = "quality"
+                    target = "L3"
                 tickets.append(
                     DemotionTicket(
                         run_id=ctx.run_id,
@@ -7611,11 +7127,11 @@ class PromoteStep:
                                 else "REVIEW"
                             )
                         ),
-                        origin_phase="quality",
-                        hop_trace=["quality", target],
-                        target_phase=target,
+                        origin_layer="L3",
+                        hop_trace=["L3", target],
+                        target_layer=target,
                         gate=gate["gate_id"],
-                        severity="BLOCKER" if target in {"libraries", "quality"} else "MAJOR",
+                        severity="BLOCKER" if target in {"L1", "L3"} else "MAJOR",
                         diagnosis=gate["summary"],
                         evidence_refs=[ref for ref in (bundle.gates.path, bundle.gaps.path) if ref],
                     )
@@ -7672,8 +7188,6 @@ class IntegrateStep:
     @staticmethod
     def _build_pin_registry_adapter(slice_root: Path) -> Any | None:
         """Build a lightweight adapter for DownwardFlowEngine pin/atom queries."""
-        # IMPL(single-layer): Retire this pin-registry adapter with DownwardFlowEngine;
-        # propagation should use shape ownership + declared/observed dependencies.
         registry_path = slice_root / ".spec" / "pin_registry.json"
         payload = _read_json_file(registry_path)
         if not isinstance(payload, dict):
@@ -7855,9 +7369,7 @@ class IntegrateStep:
         test_result: Any | None = None,
     ) -> list[DemotionTicket]:
         """Create traced TEST_FAILURE demotion tickets using DownwardFlowEngine."""
-        # IMPL(single-layer): Route test failures into shape-keyed phase work items
-        # (Section 8.2/8.3) and BLOCK out-of-authority findings; retire hop-trace demotion.
-        active_phase = ctx.active_phase
+        active_layer = cast("Literal['L1', 'L2', 'L3']", str(ctx.layer).upper())
         changed_files = [
             str(path) for path in (bundle.diff.changed_files or []) if str(path).strip()
         ]
@@ -7889,20 +7401,41 @@ class IntegrateStep:
             excerpt_path = str(failure.get("raw_excerpt_path", "")).strip()
             if excerpt_path and excerpt_path not in merged_evidence_refs:
                 merged_evidence_refs.append(excerpt_path)
-        tickets = [
-            DemotionTicket(
-                run_id=ctx.run_id,
-                slice_id=ctx.slice_id,
+
+        slice_root = Path(ctx.slice_root) if ctx.slice_root else Path(".")
+        trace_adapter = (
+            self._build_pin_registry_adapter(slice_root) if slice_root.exists() else None
+        )
+        engine = DownwardFlowEngine(
+            run_id=ctx.run_id,
+            active_layer=active_layer,
+            pin_registry=trace_adapter,
+        )
+        batch = engine.trace_and_route(
+            FailureEvidence(
                 source="TEST_FAILURE",
-                origin_phase=active_phase,
-                hop_trace=[active_phase, "libraries"],
-                target_phase="libraries",
-                severity="BLOCKER",
-                diagnosis=summary or "Integration test/merge failure",
                 failing_files=failing_files,
-                evidence_refs=merged_evidence_refs,
+                evidence_paths=merged_evidence_refs,
+                stack_trace=summary,
             )
-        ]
+        )
+
+        tickets = list(batch.tickets)
+        if not tickets:
+            tickets = [
+                DemotionTicket(
+                    run_id=ctx.run_id,
+                    slice_id=ctx.slice_id,
+                    source="TEST_FAILURE",
+                    origin_layer=active_layer,
+                    hop_trace=[active_layer, "L1"],
+                    target_layer="L1",
+                    severity="BLOCKER",
+                    diagnosis=summary or "Integration test/merge failure",
+                    failing_files=failing_files,
+                    evidence_refs=merged_evidence_refs,
+                )
+            ]
 
         anchors = self._anchors_from_refs(failing_files=failing_files, refs=refs)
         for failure in serialized_failures:
@@ -7956,9 +7489,9 @@ class IntegrateStep:
         for ticket in tickets:
             ticket.slice_id = ctx.slice_id
             ticket.source = "TEST_FAILURE"
-            ticket.origin_phase = active_phase
+            ticket.origin_layer = active_layer
             if not ticket.hop_trace:
-                ticket.hop_trace = [active_phase, ticket.target_phase]
+                ticket.hop_trace = [active_layer, ticket.target_layer]
             ticket.severity = "BLOCKER"
             if summary and summary not in ticket.diagnosis:
                 ticket.diagnosis = f"{ticket.diagnosis}; {summary}".strip("; ")
@@ -8677,18 +8210,18 @@ class VerifyStep:
             findings.append(f.to_dict())
 
         def triage_to_ticket(f: dict[str, Any]) -> DemotionTicket | None:
-            # IMPL(single-layer): VERIFY remediation should classify by active-phase
-            # authority (handle locally vs BLOCK), not map findings to target layers.
             required = f.get("required_change_type", "refactor_only")
             cat = str(f.get("category", "style")).strip().lower() or "style"
             sev = f.get("severity", "MINOR")
-            target_phase: PhaseId = ctx.active_phase
+
             if cat == "governance":
-                target_phase = ctx.active_phase
+                target = ctx.layer.upper()
             elif required == "behavior_change":
-                target_phase = "libraries"
+                target = "L1"
             elif cat == "architecture" or required == "wiring_only":
-                target_phase = "architecture"
+                target = "L2"
+            else:
+                return None
 
             loc = f.get("location") or {}
             failing_files = [loc["file"]] if loc.get("file") else []
@@ -8698,9 +8231,9 @@ class VerifyStep:
                 slice_id=ctx.slice_id,
                 source="LINEAGE",
                 category=cat,
-                origin_phase=ctx.active_phase,
-                hop_trace=[ctx.active_phase, target_phase],
-                target_phase=target_phase,
+                origin_layer=ctx.layer.upper(),
+                hop_trace=[ctx.layer.upper(), target],
+                target_layer=target,
                 severity=sev if sev in ("BLOCKER", "MAJOR", "MINOR") else "MINOR",
                 diagnosis=f.get("evidence", "")[:500] or f.get("dimension", "Verification finding"),
                 failing_files=failing_files,
@@ -9038,7 +8571,6 @@ class VerifyStep:
 
         # 2) Convert to demotion tickets
         tickets = [t for t in (triage_to_ticket(f) for f in findings) if t]
-        out_of_authority = [t for t in tickets if t.target_phase != ctx.active_phase]
 
         # Persist verify notes
         notes["findings"] = findings
@@ -9049,16 +8581,6 @@ class VerifyStep:
         # Decide pass/fail
         has_blocker = any(f.get("severity") == "BLOCKER" for f in findings)
         has_major = any(f.get("severity") == "MAJOR" for f in findings)
-        if out_of_authority:
-            return StepResult(
-                status="BLOCKED",
-                emitted_tickets=out_of_authority,
-                notes_path=str(notes_path),
-                error=(
-                    f"VERIFY: {len(out_of_authority)} finding(s) require out-of-phase changes "
-                    f"from {ctx.active_phase}"
-                ),
-            )
 
         if has_blocker or has_major:
             return StepResult(
@@ -9444,8 +8966,8 @@ class AlignStep:
                             run_id=ctx.run_id,
                             slice_id=ctx.slice_id,
                             source="REVIEW",
-                            target_phase="libraries",
-                            origin_phase=ctx.active_phase,
+                            target_layer="L1",
+                            origin_layer=ctx.layer.upper(),
                             severity="BLOCKER",
                             diagnosis=finding.get("description", "POWER alignment drift"),
                             failing_files=[finding.get("file", "")],
@@ -9508,31 +9030,28 @@ ARCHITECTURE_MODE_STEPS: tuple[type, ...] = (
 )
 CODE_QUALITY_MODE_STEPS: tuple[type, ...] = DEFAULT_BUILD_STEPS
 
-RUN_MODE_STEP_DISPATCH: dict[LifecycleRunMode, dict[PhaseId, tuple[type, ...]]] = {
+RUN_MODE_STEP_DISPATCH: dict[LifecycleRunMode, dict[Layer, tuple[type, ...]]] = {
     "build": {
-        "libraries": L1_REACTIVE_BUILD_STEPS,
-        "architecture": DEFAULT_BUILD_STEPS,
-        "quality": DEFAULT_BUILD_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
+        "l2": DEFAULT_BUILD_STEPS,
+        "l3": DEFAULT_BUILD_STEPS,
     },
     "qa": {
-        "libraries": (CollectBaselineStep, IntegrateStep, VerifyStep),
-        "architecture": (CollectBaselineStep, IntegrateStep, VerifyStep),
-        "quality": (CollectBaselineStep, IntegrateStep, VerifyStep),
+        "l1": (CollectBaselineStep, IntegrateStep, VerifyStep),
+        "l2": (CollectBaselineStep, IntegrateStep, VerifyStep),
+        "l3": (CollectBaselineStep, IntegrateStep, VerifyStep),
     },
     "architecture": {
-        "libraries": L1_REACTIVE_BUILD_STEPS,
-        "architecture": ARCHITECTURE_MODE_STEPS,
-        "quality": ARCHITECTURE_MODE_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
+        "l2": ARCHITECTURE_MODE_STEPS,
+        "l3": ARCHITECTURE_MODE_STEPS,
     },
     "code_quality": {
-        "libraries": L1_REACTIVE_BUILD_STEPS,
-        "architecture": CODE_QUALITY_MODE_STEPS,
-        "quality": CODE_QUALITY_MODE_STEPS,
+        "l1": L1_REACTIVE_BUILD_STEPS,
+        "l2": CODE_QUALITY_MODE_STEPS,
+        "l3": CODE_QUALITY_MODE_STEPS,
     },
 }
-# IMPL(single-layer): Keep this 10-step shell, but dispatch selection should pivot on
-# active phase semantics rather than Layer matrices when lifecycle runs forward-only
-# Libraries -> Architecture -> Quality (Sections 9.1/9.2).
 
 
 # ------------------------------------------------------------------
@@ -9577,7 +9096,7 @@ class PromotionLoop:
 
         self._gap_queue = GapQueue()
         self._steps_override = steps
-        self._step_cache: dict[tuple[LifecycleRunMode, PhaseId], list[Any]] = {}
+        self._step_cache: dict[tuple[LifecycleRunMode, Layer], list[Any]] = {}
         self._phase0_quality_gate_cache: dict[tuple[str, str], tuple[bool, str]] = {}
 
     @staticmethod
@@ -9610,217 +9129,20 @@ class PromotionLoop:
                 instances.append(step_cls())
         return instances
 
-    def _steps_for_run(self, *, lifecycle_mode: LifecycleRunMode, phase: PhaseId) -> list[Any]:
-        # IMPL(single-layer): Dispatch selection should key off `PhaseId` only; this
-        # lifecycle_mode/layer matrix is a migration seam until forward-only phase profiles land.
+    def _steps_for_run(self, *, lifecycle_mode: LifecycleRunMode, layer: Layer) -> list[Any]:
         if self._steps_override is not None:
             return self._steps_override
 
-        key = (lifecycle_mode, phase)
+        key = (lifecycle_mode, layer)
         cached = self._step_cache.get(key)
         if cached is not None:
             return cached
 
         mode_dispatch = RUN_MODE_STEP_DISPATCH.get(lifecycle_mode, RUN_MODE_STEP_DISPATCH["build"])
-        step_types = mode_dispatch.get(phase, mode_dispatch["libraries"])
+        step_types = mode_dispatch.get(layer, mode_dispatch["l1"])
         instances = self._instantiate_steps(step_types)
         self._step_cache[key] = instances
         return instances
-
-    @staticmethod
-    def _phase_accepts_change_type(phase: PhaseId, required_change_type: str) -> bool:
-        required = str(required_change_type or "refactor_only").strip().lower()
-        if phase == "quality":
-            return required == "refactor_only"
-        if phase == "architecture":
-            return required in {"wiring_only", "refactor_only"}
-        return required in {"behavior_change", "wiring_only", "refactor_only", "spec_change"}
-
-    @staticmethod
-    def _required_change_type_from_ticket(ticket: DemotionTicket) -> str:
-        category = str(ticket.category or "").strip().lower()
-        source = str(ticket.source or "").strip().upper()
-        if source == "ARCH_GATE" or category == "architecture":
-            return "wiring_only"
-        if source in {"ALGORITHMIC_GATE", "TEST_FAILURE"} or category in {"logic", "correctness"}:
-            return "behavior_change"
-        return "refactor_only"
-
-    @staticmethod
-    def _coordination_dir_for(ctx: SliceContext) -> Path:
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
-        return workspace / ".pdd_runs" / ctx.run_id / "coordination"
-
-    def _execute_step(self, step_name: str, ctx: LoopContext) -> StepResult:
-        """Execute one state-machine step using the current loop context."""
-        if ctx.step is None or ctx.slice_ctx is None or ctx.bundle is None:
-            return StepResult(status="FAIL", error=f"{step_name}: invalid loop context")
-        return ctx.step.run(ctx.slice_ctx, ctx.bundle)
-
-    def _emit_work_items(
-        self,
-        findings: list[dict[str, Any]],
-        source_phase: PhaseId,
-        ctx: SliceContext | None = None,
-    ) -> list[Any]:
-        """Persist phase-local remediation findings into the shared work-item store."""
-        from spec_manager.orchestration.coordination.work_items import (
-            WorkItem,
-            WorkItemLocation,
-            WorkItemStore,
-        )
-        from spec_manager.routing import load_shape_pack, resolve_shape_for_file
-
-        if not findings:
-            return []
-
-        if ctx is None:
-            return []
-        store = WorkItemStore(self._coordination_dir_for(ctx))
-        workspace = Path(ctx.workspace_root) if ctx.workspace_root else Path(".")
-        shape_index = None
-        try:
-            shape_index = load_shape_pack(workspace)
-        except Exception as exc:
-            logger.debug("Failed to load shape pack for work-item emission: %s", exc)
-
-        created: list[Any] = []
-        for idx, finding in enumerate(findings):
-            if not isinstance(finding, dict):
-                continue
-            location = finding.get("location", {})
-            if not isinstance(location, dict):
-                location = {}
-            file_path = str(
-                finding.get("file")
-                or location.get("file")
-                or (
-                    (finding.get("failing_files") or [""])[0]
-                    if isinstance(finding.get("failing_files"), list)
-                    else ""
-                )
-            ).strip()
-            shape_id = str(finding.get("shape_id") or "").strip()
-            if not shape_id and file_path and shape_index is not None:
-                resolved_shape_id = resolve_shape_for_file(file_path, shape_index)
-                shape_id = str(resolved_shape_id or "").strip()
-            if not shape_id:
-                continue
-
-            required_change_type = str(
-                finding.get("required_change_type") or "refactor_only"
-            ).strip()
-            if required_change_type not in {
-                "behavior_change",
-                "wiring_only",
-                "refactor_only",
-                "spec_change",
-            }:
-                required_change_type = "refactor_only"
-
-            stem = str(
-                finding.get("finding_id")
-                or finding.get("gate")
-                or finding.get("kind")
-                or finding.get("source")
-                or "finding"
-            ).strip()
-            work_item_id = hashlib.sha256(
-                (
-                    f"{ctx.run_id}|{ctx.slice_id}|{source_phase}|{shape_id}|{stem}|{idx}|{file_path}"
-                ).encode()
-            ).hexdigest()[:16]
-            title = str(finding.get("title") or stem or "promotion finding").strip()[:180]
-            description = str(
-                finding.get("description")
-                or finding.get("diagnosis")
-                or finding.get("summary")
-                or title
-            ).strip()
-            evidence_refs = [
-                str(item).strip()
-                for item in (
-                    finding.get("evidence_refs")
-                    if isinstance(finding.get("evidence_refs"), list)
-                    else []
-                )
-                if str(item).strip()
-            ]
-            work_item = WorkItem(
-                work_item_id=work_item_id,
-                run_id=ctx.run_id,
-                slice_id=ctx.slice_id,
-                title=title or "promotion finding",
-                description=description or "promotion finding",
-                shape_id=cast("Any", shape_id),
-                created_in_phase=source_phase,
-                required_change_type=cast("Any", required_change_type),
-                status="NEW",
-                kind="SPEC_WORK",
-                file_locations=[
-                    WorkItemLocation(
-                        file_path=file_path,
-                        line_start=location.get("start_line"),
-                        line_end=location.get("end_line"),
-                        symbol=str(location.get("symbol") or "").strip() or None,
-                    )
-                ]
-                if file_path
-                else [],
-                evidence_refs=evidence_refs,
-                metadata={
-                    "source": str(finding.get("source") or "promotion_loop"),
-                    "gate": str(finding.get("gate") or ""),
-                    "severity": str(finding.get("severity") or ""),
-                    "category": str(finding.get("category") or ""),
-                },
-            )
-            created.append(store.upsert(work_item, merge_policy="append_evidence"))
-        return created
-
-    def _count_open_phase_work_items(
-        self,
-        *,
-        ctx: SliceContext,
-        phase: PhaseId,
-        shape_ids: set[str] | None = None,
-    ) -> int:
-        from spec_manager.orchestration.coordination.work_items import WorkItemStore
-
-        store = WorkItemStore(self._coordination_dir_for(ctx))
-        open_items = [
-            item
-            for item in store.list_open(phase=phase)
-            if item.slice_id == ctx.slice_id
-        ]
-        if shape_ids:
-            open_items = [item for item in open_items if str(item.shape_id) in shape_ids]
-        return len(open_items)
-
-    def _close_phase_work_items(
-        self,
-        *,
-        ctx: SliceContext,
-        phase: PhaseId,
-        completed_work_item_ids: set[str],
-    ) -> int:
-        from spec_manager.orchestration.coordination.work_items import WorkItemStore
-
-        if not completed_work_item_ids:
-            return 0
-
-        store = WorkItemStore(self._coordination_dir_for(ctx))
-        closed = 0
-        for item in store.list_open(phase=phase):
-            if item.slice_id != ctx.slice_id:
-                continue
-            if str(item.work_item_id) not in completed_work_item_ids:
-                continue
-            updated = item
-            updated.status = "MERGED"
-            store.upsert(updated, merge_policy="append_evidence")
-            closed += 1
-        return closed
 
     def _resolve_phase0_quality_gate(self, run_context: RunContext) -> tuple[bool, str]:
         """Resolve and cache pre-loop Phase 0 library-quality gate status."""
@@ -10427,11 +9749,14 @@ class PromotionLoop:
         return len(issues) if isinstance(issues, list) else 0
 
     @staticmethod
-    def _ticket_target_layer_key(target_phase: PhaseId) -> Layer:
+    def _ticket_target_layer_key(target_layer: str) -> Layer:
         """Map demotion ticket layer labels (L1/L2/L3) to layer keys."""
-        # IMPL(single-layer): Delete this layer-key mapping when demotion apply paths
-        # are removed in favor of escalation/work-item persistence outcomes.
-        return _legacy_layer_for_phase(target_phase)
+        normalized = str(target_layer).strip().upper()
+        if normalized == "L2":
+            return "l2"
+        if normalized == "L3":
+            return "l3"
+        return "l1"
 
     def _resolve_demotion_apply_root(
         self,
@@ -10440,15 +9765,13 @@ class PromotionLoop:
         ticket: DemotionTicket,
     ) -> tuple[Path | None, str]:
         """Resolve the concrete worktree root where a demotion should apply."""
-        # IMPL(single-layer): Remove demotion-apply root resolution when remediation
-        # becomes phase-local work-item escalation with no cross-layer patch apply.
         wm = ctx.worktree_manager
         if wm is None:
             if ctx.slice_root:
                 return Path(ctx.slice_root), ""
             return None, "No slice root available for demotion apply"
 
-        target_layer = self._ticket_target_layer_key(ticket.target_phase)
+        target_layer = self._ticket_target_layer_key(ticket.target_layer)
         get_layer_worktree = getattr(wm, "get_layer_worktree", None)
         dirty_root = (
             get_layer_worktree(target_layer, "dirty") if callable(get_layer_worktree) else None
@@ -10456,7 +9779,7 @@ class PromotionLoop:
         if dirty_root is None:
             return (
                 None,
-                f"No dirty worktree for demotion target phase {ticket.target_phase}",
+                f"No dirty worktree for demotion target layer {ticket.target_layer}",
             )
         return Path(dirty_root), ""
 
@@ -10469,8 +9792,6 @@ class PromotionLoop:
         apply_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Commit demotion changes so dirty/clean divergence is explicit."""
-        # IMPL(single-layer): Delete demotion reopen commits once escalation replaces
-        # patch application; queue/block outcomes become the only persisted side effect.
         if not bool(apply_result.get("applied", False)):
             return apply_result
 
@@ -10480,11 +9801,11 @@ class PromotionLoop:
             return apply_result
 
         commit_message = (
-            f"demotion({str(ticket.target_phase).lower()}): reopen for ticket {ticket.ticket_id}"
+            f"demotion({str(ticket.target_layer).lower()}): reopen for ticket {ticket.ticket_id}"
         )
         committed, commit_error = vcs.commit_all(apply_root, commit_message)
         apply_result["layer_dirty_commit"] = {
-            "phase": ticket.target_phase,
+            "layer": ticket.target_layer,
             "root": str(apply_root),
             "committed": bool(committed),
             "error": str(commit_error or ""),
@@ -10495,7 +9816,7 @@ class PromotionLoop:
         errors = apply_result.setdefault("errors", [])
         if isinstance(errors, list):
             errors.append(
-                f"Failed to commit demotion into {ticket.target_phase} dirty branch: "
+                f"Failed to commit demotion into {ticket.target_layer} dirty branch: "
                 f"{commit_error or 'unknown commit error'}"
             )
         apply_result["applied"] = False
@@ -10537,10 +9858,6 @@ class PromotionLoop:
         last_signal_id = str(metadata.get("last_signal_id", "")).strip()
         wake_payload_raw = metadata.get("wake_payload", {})
         wake_payload = dict(wake_payload_raw) if isinstance(wake_payload_raw, dict) else {}
-        active_phase = _normalize_phase(
-            metadata.get("phase", metadata.get("layer", "")),
-            fallback=_normalize_phase(slice_ref.active_phase),
-        )
         if wake_events:
             for event in wake_events:
                 event_signal = str(event.get("signal_id", "")).strip()
@@ -10549,17 +9866,12 @@ class PromotionLoop:
                 event_payload = event.get("wake_payload")
                 if isinstance(event_payload, dict):
                     wake_payload = dict(event_payload)
-                event_phase = event.get("phase", event.get("layer", ""))
-                if event_phase:
-                    active_phase = _normalize_phase(event_phase, fallback=active_phase)
         elif last_signal_id or wake_payload:
-            # IMPL(single-layer): Wake metadata should persist `phase` + shape/work-item
-            # targeting identifiers instead of legacy `layer` labels.
             wake_events = [
                 {
                     "signal_id": last_signal_id,
                     "slice_id": slice_ref.slice_id,
-                    "phase": active_phase,
+                    "layer": str(slice_ref.layer),
                     "reason": str(metadata.get("wake_reason", "")).strip(),
                     "artifact_key": str(metadata.get("wake_artifact_key", "")).strip(),
                     "wake_payload": dict(wake_payload),
@@ -10601,10 +9913,7 @@ class PromotionLoop:
         ctx = SliceContext(
             slice_id=slice_ref.slice_id,
             slice_root=slice_ref.worktree_path,
-            # IMPL(single-layer): Populate phase identity + phase-local work-item scope
-            # from lifecycle scheduler inputs; remove direct layer handoff.
-            active_phase=active_phase,
-            layer=_legacy_layer_for_phase(active_phase),
+            layer=slice_ref.layer,
             run_id=run_context.run_id,
             mode=run_context.mode,
             lifecycle_mode=self._normalize_lifecycle_mode(run_context.lifecycle_mode),
@@ -10633,15 +9942,13 @@ class PromotionLoop:
             if clean:
                 ctx.clean_sibling_root = str(clean)
 
-        # IMPL(single-layer): Pull iteration bounds from phase-local lifecycle state
-        # (Section 9.5) instead of per-layer RunContext maps.
         # Layer-specific iteration limit
-        max_iters = run_context.max_iterations_by_phase.get(
-            ctx.active_phase, run_context.max_iterations
+        max_iters = run_context.max_iterations_by_layer.get(
+            slice_ref.layer, run_context.max_iterations
         )
         active_steps = self._steps_for_run(
             lifecycle_mode=ctx.lifecycle_mode,
-            phase=ctx.active_phase,
+            layer=ctx.layer,
         )
 
         all_tickets: list[DemotionTicket] = []
@@ -10779,21 +10086,7 @@ class PromotionLoop:
             for step in iteration_steps:
                 maybe_emit_periodic_ci_tick()
                 logger.debug("Running step: %s", step.name)
-                open_work_items = self._count_open_phase_work_items(
-                    ctx=ctx,
-                    phase=ctx.active_phase,
-                )
-                loop_ctx = LoopContext(
-                    run_id=ctx.run_id,
-                    slice_id=ctx.slice_id,
-                    iteration_index=iteration,
-                    active_phase=ctx.active_phase,
-                    pending_work_items=[{"count": open_work_items}],
-                    slice_ctx=ctx,
-                    bundle=bundle,
-                    step=cast("LoopStep", step),
-                )
-                result = self._execute_step(step.name, loop_ctx)
+                result = step.run(ctx, bundle)
                 if step.name == "GAP_EXPLORATION" and result.status == "OK":
                     question = self._register_gap_queue_stagnation_under_spec(ctx, bundle)
                     if question:
@@ -10818,83 +10111,48 @@ class PromotionLoop:
 
                 if result.emitted_tickets:
                     all_tickets.extend(result.emitted_tickets)
-                    # IMPL(single-layer): Replace local demotion apply/commit with
-                    # escalation persistence (`orchestration.demotion.escalate`) and
-                    # consume QUEUED/BLOCKED outcomes without patching worktrees here.
-                    # Consume QUEUED/BLOCKED escalation outcomes only.
+                    # Apply demotion tickets + track retries per unique failure pattern
                     seen_keys: set[tuple[str, str]] = set()
-                    blocked_escalations: list[str] = []
                     for ticket in result.emitted_tickets:
-                        required_change_type = self._required_change_type_from_ticket(ticket)
-                        within_authority = (
-                            ticket.target_phase == ctx.active_phase
-                            and self._phase_accepts_change_type(
-                                ctx.active_phase,
-                                required_change_type,
-                            )
+                        apply_root, apply_root_error = self._resolve_demotion_apply_root(
+                            ctx=ctx,
+                            ticket=ticket,
                         )
-                        finding_payload = {
-                            "finding_id": ticket.ticket_id,
-                            "source": ticket.source,
-                            "gate": ticket.gate or "",
-                            "shape_id": "",
-                            "file": (
-                                ticket.failing_files[0]
-                                if ticket.failing_files
-                                else (
-                                    str((ticket.symbol_span_anchors or [{}])[0].get("file", "")).strip()
-                                    if ticket.symbol_span_anchors
-                                    else ""
-                                )
-                            ),
-                            "title": ticket.gate or ticket.source,
-                            "description": ticket.diagnosis,
-                            "category": ticket.category,
-                            "severity": ticket.severity,
-                            "required_change_type": required_change_type,
-                            "evidence_refs": list(ticket.evidence_refs),
-                            "location": (
-                                (ticket.symbol_span_anchors or [{}])[0]
-                                if ticket.symbol_span_anchors
-                                else {}
-                            ),
-                        }
-                        created_items = (
-                            self._emit_work_items(
-                                [finding_payload],
-                                ctx.active_phase,
+                        if apply_root is None:
+                            apply_result: dict[str, Any] = {
+                                "ticket_id": ticket.ticket_id,
+                                "applied": False,
+                                "patches": [],
+                                "gap_evidence_added": 0,
+                                "registry_updates": [],
+                                "routing_patches": [],
+                                "errors": [apply_root_error],
+                            }
+                        else:
+                            apply_result = self._dm.apply(
+                                ticket,
+                                apply_root,
+                                gap_queue=self._gap_queue,
+                                branch_manager=ctx.branch_manager,
+                            )
+                            apply_result = self._commit_demotion_reopen(
                                 ctx=ctx,
-                            )
-                            if within_authority
-                            else []
-                        )
-                        if within_authority and not created_items:
-                            within_authority = False
-                            blocked_escalations.append(
-                                f"{ticket.ticket_id}:ambiguous_target:{required_change_type}"
+                                ticket=ticket,
+                                apply_root=apply_root,
+                                apply_result=apply_result,
                             )
                         bundle.demotions.emitted.append(ticket.ticket_id)
-                        escalation_status = "QUEUED" if within_authority else "BLOCKED"
-                        bundle.demotions.pending.append(ticket.ticket_id)
+                        if apply_result.get("applied", False):
+                            bundle.demotions.applied.append(ticket.ticket_id)
+                        else:
+                            bundle.demotions.pending.append(ticket.ticket_id)
                         bundle.demotions.records.append(
                             {
                                 "ticket": ticket.to_dict(),
-                                "escalation": {
-                                    "status": escalation_status,
-                                    "required_change_type": required_change_type,
-                                    "work_item_ids": [
-                                        str(item.work_item_id)
-                                        for item in created_items
-                                        if getattr(item, "work_item_id", "")
-                                    ],
-                                },
+                                "apply_result": apply_result,
                                 "evidence_refs": list(ticket.evidence_refs),
                             }
                         )
-                        if not within_authority:
-                            blocked_escalations.append(
-                                f"{ticket.ticket_id}:{ticket.target_phase}:{required_change_type}"
-                            )
                         files_key = (
                             ",".join(sorted(ticket.failing_files)) if ticket.failing_files else ""
                         )
@@ -10926,19 +10184,12 @@ class PromotionLoop:
                             )
 
                     # Ticket questions without available constraints force BLOCKED.
-                    # IMPL(single-layer): Ambiguous or out-of-authority remediation should
-                    # terminate as BLOCK with diagnostics, not trigger cross-phase retries.
                     unresolved_ticket_questions = [
                         str(question).strip()
                         for ticket in result.emitted_tickets
                         for question in (ticket.questions or [])
                         if str(question).strip()
                     ]
-                    if blocked_escalations:
-                        unresolved_ticket_questions.extend(
-                            f"Out-of-authority escalation blocked: {entry}"
-                            for entry in blocked_escalations
-                        )
                     if unresolved_ticket_questions and not (bundle.facts.constraints_refs or []):
                         existing_events = [
                             event
@@ -10957,11 +10208,7 @@ class PromotionLoop:
                         bundle.implementation.under_spec_events = existing_events
                         result.status = "BLOCKED"
                         if not result.error:
-                            result.error = "Escalation raised unresolved under-spec questions"
-                    elif blocked_escalations:
-                        result.status = "BLOCKED"
-                        if not result.error:
-                            result.error = "Out-of-authority remediation is blocked in active phase"
+                            result.error = "Demotion ticket raised unresolved under-spec questions"
 
                 self._record_provenance(bundle, step.name, result, ctx)
                 self._refresh_facts(bundle)
@@ -11096,14 +10343,7 @@ class PromotionLoop:
 
             # Check termination
             remaining = len(bundle.gaps.open_gaps)
-            # IMPL(single-layer): Convergence authority should read phase-local open
-            # work items + deterministic verifier/test outcomes, not pending demotion count.
-            # IMPL(single-layer): Skeleton draft/non-draft convergence stays lifecycle-owned;
-            # PromotionLoop DONE checks should stay slice-local and deterministic only.
-            open_phase_work_items = self._count_open_phase_work_items(
-                ctx=ctx,
-                phase=ctx.active_phase,
-            )
+            unresolved_slice_demotions = len(bundle.demotions.pending)
             refinement_issue_count = self._refinement_issue_count(ctx, bundle)
             refinement_issue_threshold = self._refinement_issue_threshold(ctx)
             configured_steps = {step.name for step in active_steps}
@@ -11117,9 +10357,9 @@ class PromotionLoop:
             )
             if remaining == 0:
                 completion_failures: list[str] = []
-                if open_phase_work_items > 0:
+                if unresolved_slice_demotions > 0:
                     completion_failures.append(
-                        f"open_phase_work_items={open_phase_work_items}"
+                        f"unresolved_demotion_tickets={unresolved_slice_demotions}"
                     )
                 if refinement_issue_count > refinement_issue_threshold:
                     completion_failures.append(
@@ -11155,10 +10395,10 @@ class PromotionLoop:
 
             # Still gaps — loop
             logger.info(
-                "Slice '%s': %d gaps remaining (open_phase_work_items=%d), continuing",
+                "Slice '%s': %d gaps remaining (unresolved_demotions=%d), continuing",
                 ctx.slice_id,
                 remaining,
-                open_phase_work_items,
+                unresolved_slice_demotions,
             )
 
         # Max iterations reached

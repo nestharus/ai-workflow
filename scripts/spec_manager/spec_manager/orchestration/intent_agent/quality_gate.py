@@ -327,19 +327,6 @@ def persist_quality_check_record(
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-5.5.1]: Implement QualityValidatorStrategy
-#   - LLM strategy that evaluates a question candidate against the 5 rules
-#   - Input: candidate text, scenario, answer_spec_kind, taxonomy_type,
-#     concept_map (user_introduced_terms for rule 1 exception)
-#   - Output: QualityCheckRecord with per-rule pass/fail and overall result
-#   - Rule 1 (domain_language_only): check no arch/impl jargon UNLESS
-#     term is in concept_map.user_introduced_terms
-#   - Rule 2 (bounded_answerability): must have concrete answer space
-#     (choice/yes_no/value/bounded_text, no open-ended)
-#   - Rule 3 (specific_behavior): references concrete behavior/outcome,
-#     not abstract dimensions like "consistency", "scalability"
-#   - Rule 4 (scenario_grounded): includes scenario or failure mode
-#   - Rule 5 (single_question): one atomic decision per item
 class QualityValidatorStrategy:
     """LLM strategy to evaluate question quality against the five rules.
 
@@ -491,15 +478,6 @@ class QualityValidatorStrategy:
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-5.5.2]: Implement QuestionRepairStrategy
-#   - LLM strategy that repairs a failed question draft
-#   - Input: failed QualityCheckRecord (with per-rule failures) +
-#     original signal context
-#   - Output: repaired candidate (text, scenario, answer_spec)
-#   - Max 2 retries: attempt 1 (original) + attempt 2 (repair 1) +
-#     attempt 3 (repair 2). If still fails → UNASKABLE
-#   - Must NOT degrade quality to pass: if it cannot fix, return None
-#   - Each repair attempt is a new QualityCheckRecord in the event log
 class QuestionRepairStrategy:
     """LLM strategy to repair failed question drafts.
 
@@ -610,15 +588,6 @@ class QuestionRepairStrategy:
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-3.3]: Implement QuestionDraftStrategy
-#   - LLM strategy that converts a UserQuestionSignal into a user-facing
-#     question draft at constraint level
-#   - Input: signal (text, taxonomy_hint, canonical_key_hint, context),
-#     problem_frame, concept_map
-#   - Output: draft with text, scenario, why_it_matters, answer_spec
-#   - Must reframe prohibited types (ARCHITECTURE → CONSTRAINT/TRADEOFF etc.)
-#     using the reframe patterns from Section 5.4.2
-#   - Draft passes through quality gate pipeline before enqueue
 class QuestionDraftStrategy:
     """LLM strategy to produce user-facing question drafts from signals.
 
@@ -718,15 +687,6 @@ class QuestionDraftStrategy:
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-5.5.2]: Implement enforce_quality_gate() — full pipeline
-#   - Takes a QuestionDraftStrategy candidate and runs the enforcement pipeline:
-#     1. QualityValidatorStrategy evaluates candidate
-#     2. If PASS → return (candidate, record, True)
-#     3. If FAIL → QuestionRepairStrategy repairs (up to MAX_RETRIES)
-#     4. Re-evaluate after each repair
-#     5. If FAIL after all retries → return (None, records, False)
-#   - All QualityCheckRecords are returned for event log persistence
-#   - Used by IntentAgentOrchestrator.ingest_signal()
 def enforce_quality_gate(
     candidate: QualityCheckCandidate,
     question_id: str,

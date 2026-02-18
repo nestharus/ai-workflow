@@ -1,12 +1,3 @@
-# TODO(single-layer): DELETE — Pin-target drift detection (signature changes, file
-#   moves, function removals, wrapper staleness, broken imports) tracks per-function
-#   bridge state. Single-layer doesn't track individual function bridges. Structural
-#   drift moves to shape matcher: declared vs observed dependency direction + verifier
-#   pass/fail (Section 6.2, 6.3). The concept of "has this function moved" is handled
-#   by ownership match (file → shape via path prefix).
-# IMPL(single-layer): While this module remains during migration, any import-drift input
-# should be sourced from deterministic dependency scan records (same source as
-# `projection.lineage.builder`), not pin-registry projection edges.
 """Drift detection for pin targets.
 
 Detects when pin targets no longer match their expected state:

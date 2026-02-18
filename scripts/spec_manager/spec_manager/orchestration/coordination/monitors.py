@@ -1,52 +1,3 @@
-# TODO(single-layer): KEEP/EXTEND — JIT monitors are phase-independent infrastructure.
-#   MonitorSpec conditions watch for workspace state changes (file exists, test passes,
-#   work item resolved). Extend with shape-aware conditions: "shape X verifiers all pass",
-#   "shape X dependency match clean" (Section 6.3). The monitor->wake-event->promotion-loop
-#   pipeline is unchanged. Monitors operate identically across all 3 phases
-#   (Libraries, Architecture, Quality).
-# ALGORITHM(single-layer):
-#   References: response3 Sections 6.3 and 9.3.
-#   Data structures:
-#     - PhaseId = Literal['libraries', 'architecture', 'quality'] (3 forward-only phases).
-#     - Each phase runs its own PromotionLoop with IMPLEMENT step; monitors fire within whichever phase is active.
-#     - Add MonitorCondition subclasses:
-#       - ShapeVerifiersPassCondition {shape_id: ShapeId}
-#       - ShapeDependencyCleanCondition {shape_id: ShapeId, policy: str = 'declared_superset'}
-#     - Update _TYPE_MAP to include both new conditions.
-#   Interface contracts:
-#     - condition_from_dict must deserialize new condition types.
-#     - MonitorSpec remains unchanged except conditions can now be shape-aware.
-#   Control flow:
-#     1. Persist/load shape-aware conditions through registry JSON.
-#     2. Keep monitor lifecycle/wake pipeline unchanged.
-#     3. Allow monitors to be registered per shape when work items are created.
-#     4. Phases block if a finding is outside their authority (phase-local remediation or block); no backtracking to earlier phases.
-#   Error handling:
-#     - Invalid shape_id in condition payload fails monitor creation.
-#   Integration points:
-#     - Used by monitor_executor ConditionChecker.
-#   Bounds and convergence monitoring (§§9.5-9.6):
-#     - Add MonitorCondition subclasses for per-phase convergence enforcement:
-#       - IterationCapCondition {phase: PhaseId, slice_id: str, max_iterations: int = 20}
-#       - WorkItemCapCondition {phase: PhaseId, max_work_items: int = 50}
-#       - StagnationCondition {phase: PhaseId, slice_id: str, verifier_id: str, window: int = 2}
-#       - PhaseConvergenceCondition {phase: PhaseId} — skeleton non-draft + all verifiers pass + no open work items.
-#     - These fire block/diagnostic wake events when caps are hit or convergence is reached.
-#   Test requirements:
-#     - Serialization round-trip for new condition types.
-#     - Registry list/filter includes shape-aware monitors.
-#     - Iteration/work-item cap conditions fire at correct thresholds.
-#     - Stagnation condition fires after N same-verifier failures with no diff progress.
-# IMPL(single-layer): `monitors.py` is the authoritative persisted-condition schema for
-# monitor JSON files; shape-aware and convergence-bound condition payloads must be added
-# here before executor/planner wiring so load/save contracts stay synchronized.
-# IMPL(single-layer): Condition payloads carrying phase semantics should align to the
-# shared forward-only phase vocabulary (`libraries`/`architecture`/`quality`) used by
-# run state, work items, and lifecycle convergence checks.
-# IMPL(single-layer): Bound-enforcement monitor specs (iteration/work-item/stagnation)
-# should default timeout handling to FAIL/ESCALATE rather than RETRY so §9.5 caps can
-# terminate bounded cycles with diagnostics instead of re-arming indefinitely.
-
 """JIT monitor specifications and registry.
 
 A MonitorSpec describes a condition to watch for, plus what to do when
@@ -63,9 +14,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
-
-from spec_manager.compliance.promotion.config import PhaseId
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +22,6 @@ _EXECUTION_MODES = {"hybrid", "poll", "event"}
 _TIMEOUT_ACTIONS = {"ESCALATE", "FAIL", "RETRY"}
 _WAKE_ACTIONS = {"WAKE_SLICE"}
 _MONITOR_STATES = {"ACTIVE", "FIRED", "EXPIRED", "FAILED", "CANCELLED"}
-_ALLOWED_MATCHER_POLICIES = {"declared_superset", "exact", "allowlist_only"}
-_ALLOWED_PHASES = {"libraries", "architecture", "quality"}
 
 
 def _require_enum(
@@ -96,68 +43,6 @@ def _require_enum(
             f"Invalid monitor field '{field_name}': {raw!r}. Expected one of {sorted(allowed)}."
         )
     return normalized
-
-
-def _require_non_empty(field_name: str, value: Any) -> str:
-    raw = str(value).strip()
-    if not raw:
-        raise ValueError(f"Invalid monitor field '{field_name}': empty value.")
-    return raw
-
-
-def _require_positive_int(
-    *, field_name: str, value: Any, default: int
-) -> int:
-    raw = default if value is None else value
-    try:
-        parsed = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid monitor field '{field_name}': {raw!r}. Expected a positive integer."
-        ) from exc
-    if parsed <= 0:
-        raise ValueError(
-            f"Invalid monitor field '{field_name}': {raw!r}. Must be > 0."
-        )
-    return parsed
-
-
-def _require_phase_id(value: Any, *, default: PhaseId | None = None) -> PhaseId:
-    if value is None or not str(value).strip():
-        if default is not None:
-            return default
-    return cast(
-        "PhaseId",
-        _require_enum(
-            field_name="phase",
-            value=value,
-            allowed=_ALLOWED_PHASES,
-            normalize="lower",
-        ),
-    )
-
-
-def _condition_shape_id(condition: dict[str, Any]) -> str:
-    if not isinstance(condition, dict):
-        return ""
-    cond_type = str(condition.get("type", "")).strip()
-    if cond_type in {"shape_verifiers_pass", "shape_dependency_clean"}:
-        return str(condition.get("shape_id", "")).strip()
-    return ""
-
-
-def _condition_phase(condition: dict[str, Any]) -> str:
-    if not isinstance(condition, dict):
-        return ""
-    cond_type = str(condition.get("type", "")).strip()
-    if cond_type in {
-        "iteration_cap",
-        "work_item_cap",
-        "stagnation",
-        "phase_convergence",
-    }:
-        return str(condition.get("phase", "")).strip().lower()
-    return ""
 
 
 # ------------------------------------------------------------------
@@ -203,88 +88,19 @@ class ConstraintPresentCondition(MonitorCondition):
     slice_id: str = ""
 
 
-@dataclass
-class ShapeVerifiersPassCondition(MonitorCondition):
-    """True when required verifiers pass for the shape."""
-
-    type: str = "shape_verifiers_pass"
-    shape_id: str = ""
-
-
-@dataclass
-class ShapeDependencyCleanCondition(MonitorCondition):
-    """True when shape dependency drift is clean for policy."""
-
-    type: str = "shape_dependency_clean"
-    shape_id: str = ""
-    policy: str = "declared_superset"
-
-
-@dataclass
-class IterationCapCondition(MonitorCondition):
-    """True when a phase reaches the per-slice iteration cap."""
-
-    type: str = "iteration_cap"
-    phase: PhaseId = "libraries"
-    slice_id: str = ""
-    max_iterations: int = 20
-
-
-@dataclass
-class WorkItemCapCondition(MonitorCondition):
-    """True when open work items in phase exceed the cap."""
-
-    type: str = "work_item_cap"
-    phase: PhaseId = "libraries"
-    max_work_items: int = 50
-
-
-@dataclass
-class StagnationCondition(MonitorCondition):
-    """True when a verifier fails unchanged for a stagnation window."""
-
-    type: str = "stagnation"
-    phase: PhaseId = "libraries"
-    slice_id: str = ""
-    verifier_id: str = ""
-    window: int = 2
-
-
-@dataclass
-class PhaseConvergenceCondition(MonitorCondition):
-    """True when the active phase convergence criteria are satisfied."""
-
-    type: str = "phase_convergence"
-    phase: PhaseId = "libraries"
-
-
 # ------------------------------------------------------------------
 # Factory
 # ------------------------------------------------------------------
 
-# IMPL(single-layer): `_TYPE_MAP` is the single registry for condition type
-# deserialization. Add/remove types atomically with `condition_from_dict` and executor
-# dispatch updates; do not keep compatibility aliases for retired payload types.
 _TYPE_MAP: dict[str, type[MonitorCondition]] = {
     "git_symbol_exists": GitSymbolExistsCondition,
     "work_item_done": WorkItemDoneCondition,
     "constraint_present": ConstraintPresentCondition,
-    "shape_verifiers_pass": ShapeVerifiersPassCondition,
-    "shape_dependency_clean": ShapeDependencyCleanCondition,
-    "iteration_cap": IterationCapCondition,
-    "work_item_cap": WorkItemCapCondition,
-    "stagnation": StagnationCondition,
-    "phase_convergence": PhaseConvergenceCondition,
 }
 
 
 def condition_from_dict(d: dict[str, Any]) -> MonitorCondition:
     """Dispatch on ``d["type"]`` to build the right condition dataclass."""
-    # IMPL(single-layer): New shape-aware/bounds-aware condition branches should fail
-    # closed on invalid required identifiers (e.g., shape/phase/slice/verifier IDs) so
-    # monitors cannot silently enter ACTIVE state with non-authoritative inputs.
-    if not isinstance(d, dict):
-        raise TypeError("Condition payload must be a dict.")
     cond_type = d.get("type", "")
     cls = _TYPE_MAP.get(cond_type)
     if cls is None:
@@ -309,50 +125,6 @@ def condition_from_dict(d: dict[str, Any]) -> MonitorCondition:
             constraint_id=d.get("constraint_id", ""),
             slice_id=d.get("slice_id", ""),
         )
-    if cls is ShapeVerifiersPassCondition:
-        return cls(shape_id=_require_non_empty("shape_id", d.get("shape_id")))
-    if cls is ShapeDependencyCleanCondition:
-        return cls(
-            shape_id=_require_non_empty("shape_id", d.get("shape_id")),
-            policy=_require_enum(
-                field_name="policy",
-                value=d.get("policy", "declared_superset"),
-                allowed=_ALLOWED_MATCHER_POLICIES,
-                normalize="lower",
-            ),
-        )
-    if cls is IterationCapCondition:
-        return cls(
-            phase=_require_phase_id(d.get("phase"), default="libraries"),
-            slice_id=_require_non_empty("slice_id", d.get("slice_id")),
-            max_iterations=_require_positive_int(
-                field_name="max_iterations",
-                value=d.get("max_iterations", 20),
-                default=20,
-            ),
-        )
-    if cls is WorkItemCapCondition:
-        return cls(
-            phase=_require_phase_id(d.get("phase"), default="libraries"),
-            max_work_items=_require_positive_int(
-                field_name="max_work_items",
-                value=d.get("max_work_items", 50),
-                default=50,
-            ),
-        )
-    if cls is StagnationCondition:
-        return cls(
-            phase=_require_phase_id(d.get("phase"), default="libraries"),
-            slice_id=_require_non_empty("slice_id", d.get("slice_id")),
-            verifier_id=_require_non_empty("verifier_id", d.get("verifier_id")),
-            window=_require_positive_int(
-                field_name="window",
-                value=d.get("window", 2),
-                default=2,
-            ),
-        )
-    if cls is PhaseConvergenceCondition:
-        return cls(phase=_require_phase_id(d.get("phase"), default="libraries"))
     return MonitorCondition(type=cond_type)  # pragma: no cover
 
 
@@ -426,9 +198,6 @@ class SliceInfo:
 class MonitorSpec:
     """Full specification of a JIT monitor."""
 
-    # IMPL(single-layer): `condition` remains persisted as raw JSON payload; callers must
-    # normalize through `condition_from_dict` at execution boundaries so registry storage
-    # can carry heterogeneous condition types without ad-hoc per-caller parsing.
     monitor_version: int = 1
     monitor_id: str = ""
     run_id: str = ""
@@ -580,9 +349,6 @@ class MonitorRegistry:
 
     def register(self, spec: MonitorSpec) -> None:
         """Save a monitor spec to the registry."""
-        if not isinstance(spec.condition, dict):
-            raise TypeError("Monitor condition must be a dict.")
-        condition_from_dict(spec.condition)
         spec.save(self._monitors_dir)
 
     def get(self, monitor_id: str) -> MonitorSpec | None:
@@ -613,26 +379,6 @@ class MonitorRegistry:
     def get_for_slice(self, slice_id: str) -> list[MonitorSpec]:
         """Return all monitors watching on behalf of *slice_id*."""
         return [s for s in self._load_all() if s.waiting_slice.slice_id == slice_id]
-
-    def get_for_shape(self, shape_id: str) -> list[MonitorSpec]:
-        """Return all monitors tracking a specific shape."""
-        target = str(shape_id).strip()
-        if not target:
-            return []
-        return [
-            s
-            for s in self._load_all()
-            if _condition_shape_id(s.condition) == target
-        ]
-
-    def get_for_phase(self, phase: PhaseId) -> list[MonitorSpec]:
-        """Return all monitors associated with a specific phase."""
-        normalized = _require_phase_id(phase)
-        return [
-            s
-            for s in self._load_all()
-            if _condition_phase(s.condition) == normalized
-        ]
 
     def get_for_signal(self, signal_id: str) -> MonitorSpec | None:
         """Return the monitor associated with *signal_id*, if any."""
@@ -713,8 +459,6 @@ class MonitorRegistry:
         if new_state not in terminal_states or previous_state == new_state:
             return
 
-        # IMPL(single-layer): Cap/stagnation/convergence monitors rely on receipt payload
-        # diagnostics to distinguish block vs phase-complete wake outcomes downstream.
         record: dict[str, Any] = {
             "timestamp": datetime.now(UTC).isoformat(),
             "event": event or f"monitor_{new_state.lower()}",

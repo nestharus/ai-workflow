@@ -1,0 +1,3 @@
+command = "codex2"
+args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.3-codex-spark", "-c", "model_reasoning_effort=xhigh"]
+prompt_mode = "arg"

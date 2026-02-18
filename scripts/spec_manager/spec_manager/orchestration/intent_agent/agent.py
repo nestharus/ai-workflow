@@ -147,12 +147,6 @@ def build_intent_agent_with_planner(
 # ---------------------------------------------------------------------------
 
 
-# TODO [R2-1.2]: Implement IntentFrameStrategy
-#   - LLM strategy to update problem frame from user text
-#   - Input: current problem_frame, user message text, concept_map
-#   - Output: updated problem_frame (restatement, goals, non_goals,
-#     scope: {in, out}, success_metrics, risk_flags, frame_assumptions)
-#   - Must NOT produce constraints — only user-facing framing metadata
 class IntentFrameStrategy:
     """LLM strategy to update problem frame from user text."""
 
@@ -215,13 +209,6 @@ class IntentFrameStrategy:
         return merged
 
 
-# TODO [R2-1.2]: Implement ConceptMapStrategy
-#   - LLM strategy to maintain mapping between user terms and normalized concepts
-#   - Input: current concept_map, user message text
-#   - Output: updated concept_map (user_terms, normalized_terms,
-#     user_introduced_terms)
-#   - user_introduced_terms tracks technical vocabulary the user has used
-#     (exception for quality gate rule 1)
 class ConceptMapStrategy:
     """LLM strategy to maintain user↔system term mapping."""
 
@@ -290,12 +277,6 @@ class ConceptMapStrategy:
         return merged
 
 
-# TODO [R2-2.3]: Implement QueueReassessStrategy
-#   - LLM strategy for the LLM pass in queue reassessment
-#   - Input: remaining OPEN questions after mechanical pass,
-#     updated frame, new authoritative store references
-#   - Output: per-question action (KEEP | STALE | SUPERSEDED | REWORD | DISMISSED)
-#   - Only called for questions where ambiguity remains after mechanical pass
 class QueueReassessStrategy:
     """LLM strategy for queue reassessment after Planner writes."""
 
@@ -2530,15 +2511,6 @@ class IntentAgentOrchestrator:
             for item in open_items
         ]
 
-    # TODO [R2-1.4]: Implement resume() — deterministic resumption
-    #   1. Load session_state.json
-    #   2. Load question_queue.json
-    #   3. Read new UserQuestionSignals since user_question_signal_watermark
-    #   4. Read new PlannerUpdates since planner_update_watermark
-    #   5. Ingest new signals (classify, draft, quality gate, enqueue)
-    #   6. Run reassessment against new planner updates
-    #   7. Recompute queue ordering and staleness
-    #   8. Return next action to present (question or batch)
     def resume(self) -> dict[str, Any] | None:
         """Resume from persisted state and return next action."""
         # 1. Init stores.
@@ -2595,13 +2567,6 @@ class IntentAgentOrchestrator:
         action["next_up"] = self._next_up_preview()
         return action
 
-    # TODO [R2-5.1/5.2]: Implement handle_user_message(text) — user input handler
-    #   - Update problem frame via IntentFrameStrategy
-    #   - Update concept map via ConceptMapStrategy
-    #   - Extract candidate unknowns (potential questions)
-    #   - Choose: ask highest-value question OR produce/update skeleton
-    #   - "Enough to proceed" check (Section 5.7):
-    #     core workflows identifiable + major constraint dimensions covered
     def _capture_original_intent(self, text: str) -> None:
         if self._state is None or self._state.original_intent.user_statement:
             return
@@ -2725,14 +2690,6 @@ class IntentAgentOrchestrator:
         self._finalize_user_message()
         return self.next_action()
 
-    # TODO [R2-3.3]: Implement ingest_signal(signal) — signal→question pipeline
-    #   1. Classify taxonomy type (may be prohibited)
-    #   2. If prohibited → reframe to user-valid type
-    #   3. Draft user question via QuestionDraftStrategy
-    #   4. Run quality gate pipeline (enforce_quality_gate)
-    #   5. If PASS → dedup check → enqueue
-    #   6. If FAIL after retries → mark UNASKABLE, escalate to Planner
-    #   7. Update watermark
     def ingest_signal(
         self,
         signal: UserQuestionSignal,
@@ -3044,13 +3001,6 @@ class IntentAgentOrchestrator:
             self._maybe_update_skeleton()
         return item
 
-    # TODO [R2-4.1]: Implement handle_answer(question_id, raw_text, choice_id)
-    #   1. Record raw answer provenance
-    #   2. Produce AnswerTranslation via AnswerTranslateStrategy
-    #   3. Save translation artifact
-    #   4. Submit to Planner for ingestion
-    #   5. Handle follow-up question drafts (quality gate, recursion budget)
-    #   6. Return translation artifact reference
     def handle_answer(
         self,
         question_id: str,
@@ -3374,12 +3324,6 @@ class IntentAgentOrchestrator:
         # 6. Return the translation.
         return translation
 
-    # TODO [R2-2.3]: Implement handle_planner_updates() — reassessment trigger
-    #   1. Read new planner updates since watermark
-    #   2. Run mechanical pass (canonical_key match → ANSWERED, blockers cleared → STALE)
-    #   3. Run LLM reassess pass for remaining ambiguous OPEN questions
-    #   4. Apply actions to queue
-    #   5. Update watermark
     def _empty_reassessment_result(self, run_id: str, session_id: str) -> dict[str, Any]:
         return {
             "version": 1,
@@ -3865,10 +3809,6 @@ class IntentAgentOrchestrator:
         self._maybe_update_skeleton()
         return reassessment
 
-    # TODO [R2-3.4]: Implement next_action() — decide what to present
-    #   - If queue empty → return None (or produce skeleton if ready)
-    #   - Immediate ask: if queue has BLOCKING and current is INFO
-    #   - Default: return next_question() from queue
     def next_action(self) -> dict[str, Any] | None:
         """Determine the next action (ask question, produce skeleton, wait).
 
@@ -3936,10 +3876,6 @@ class IntentAgentOrchestrator:
         }
         return self._finalize_prompt_action(action)
 
-    # TODO [R2-5.3]: Implement handle_vague_input(text) — vague input handler
-    #   - If user input is vague, ask a single INTENT question that
-    #     disambiguates between plausible frames
-    #   - Must be scenario-grounded and bounded (choice set)
     def handle_vague_input(self, text: str) -> QuestionItem:
         """Handle vague user input by asking a disambiguating INTENT question."""
         self._ensure_initialized()
@@ -4065,12 +4001,6 @@ class IntentAgentOrchestrator:
 
         return item
 
-    # TODO [R2-7.1/7.2]: Implement handle_redefinition(trigger) — problem redefinition
-    #   - Triggered by Planner (scope change, requirement conflict, etc.)
-    #   - Produce a single queue item showing:
-    #     original intent, current restatement, what changed (1-3 bullets)
-    #   - Ask bounded confirmation: adopt new / keep original / partial
-    #   - Authoritative only after Planner ingests the AnswerTranslation
     def handle_redefinition(self, trigger: dict[str, Any]) -> QuestionItem:
         """Handle a problem redefinition trigger from Planner."""
         self._ensure_initialized()
@@ -4559,11 +4489,6 @@ class IntentAgentOrchestrator:
             "constraint_refs": top_level_constraint_refs,
         }
 
-    # TODO [R2-6.1]: Implement produce_skeleton() — skeleton generation
-    #   - Check should_produce_skeleton() first
-    #   - Use SkeletonSynthesisStrategy to produce SkeletonSpec
-    #   - Render to output directory
-    #   - Update skeleton_state in session
     def produce_skeleton(self) -> list[Path] | None:
         """Produce or update the pre-decomposition skeleton."""
         self._ensure_initialized()
@@ -4694,10 +4619,6 @@ class IntentAgentOrchestrator:
 
         return created_paths
 
-    # TODO [R2-9.1]: Implement save_state() — persist all state
-    #   - Save session_state.json
-    #   - Save question_queue.json
-    #   - Append to events.jsonl
     def save_state(self) -> None:
         """Persist all state to disk."""
         # 1. Ensure intent directory exists.

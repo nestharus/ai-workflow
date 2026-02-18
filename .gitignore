@@ -42,6 +42,8 @@ htmlcov/
 nosetests.xml
 junit.xml
 reports/
+**/impl/logs/
+**/impl/prompts/
 
 # Generated / output
 openapi/

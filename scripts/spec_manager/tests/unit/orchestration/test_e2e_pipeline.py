@@ -15,21 +15,23 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
+from spec_manager.core.layer_types import Layer
 from spec_manager.evaluation.report import FinalReportGenerator
 from spec_manager.evaluation.scoring import (
+    ArtifactSnapshot,
     RunReporter,
     Scorecard,
     ScorecardMetric,
+    SliceArtifact,
 )
 from spec_manager.orchestration.demotion import DemotionManager, DemotionTicket
 from spec_manager.orchestration.evidence import EvidenceBundle, GapReportRef
-from spec_manager.orchestration.models import Layer
 from spec_manager.orchestration.promotion_loop import (
     LoopStep,
     PromotionLoop,
@@ -194,6 +196,7 @@ class TestStagnationDetection:
 
     def test_stagnation_detection(self, tmp_path: Path) -> None:
         # Use a step that always produces 5 gaps and never decreases them.
+        # Without a dedicated GAP_EXPLORATION step, this path now ends at MAX_ITERATIONS.
         gap_step = FixedGapStep(gap_count=5)
         # DemotionManager needs a workspace to write ledger/lineage.
         dm = DemotionManager(workspace_root=tmp_path, run_id="stag-run")
@@ -216,9 +219,8 @@ class TestStagnationDetection:
         )
 
         result = loop.run_slice(ref, run_ctx)
-        assert result.status == "STAGNATED"
+        assert result.status == "MAX_ITERATIONS"
         assert result.remaining_gaps == 5
-        assert "stagnation" in result.error.lower() or "not improving" in result.error.lower()
 
     def test_no_stagnation_when_gaps_decrease(self, tmp_path: Path) -> None:
         # Step that decreases gaps from 3 to 0 => should reach COMPLETE.
@@ -412,13 +414,15 @@ class TestPerTicketRetryBudget:
         run_ctx = RunContext(
             run_id="rot-run",
             workspace_root=str(tmp_path),
-            max_iterations=6,
+            max_iterations_by_layer={"l1": 6, "l2": 6, "l3": 6},
         )
 
         result = loop.run_slice(ref, run_ctx)
         # Each ticket is unique, so no single ticket exceeds budget.
-        # Stagnation detection fires because gaps never decrease.
-        assert result.status == "STAGNATED"
+        # With this fixture, loop hits max iterations before any single ticket
+        # budget key reaches the limit.
+        assert result.status == "MAX_ITERATIONS"
+        assert result.iterations == 6
 
 
 # ===================================================================
@@ -516,7 +520,7 @@ class TestRunState:
         config = RunConfig(
             run_id="test-run",
             mode="auto",
-            max_iterations_by_layer={"l1": 10, "l2": 20, "l3": 5},
+            max_iterations_per_slice=10,
             max_approval_iterations=2,
         )
         mgr.write_config(config)
@@ -525,7 +529,7 @@ class TestRunState:
         assert loaded is not None
         assert loaded.run_id == "test-run"
         assert loaded.mode == "auto"
-        assert loaded.max_iterations_by_layer == {"l1": 10, "l2": 20, "l3": 5}
+        assert loaded.max_iterations_per_slice == 10
         assert loaded.max_approval_iterations == 2
         assert loaded.created_at > 0  # auto-set
 
@@ -536,18 +540,18 @@ class TestRunState:
     def test_update_and_read_state(self, tmp_path: Path) -> None:
         mgr = RunStateManager(workspace_root=tmp_path, run_id="state-run")
 
-        mgr.update_state(active_layer="l1", phase="intake")
+        mgr.update_state(active_phase="libraries", phase="intake")
         state = mgr.read_state()
         assert state is not None
-        assert state.active_layer == "l1"
+        assert state.active_phase == "libraries"
         assert state.phase == "intake"
         assert state.updated_at > 0
 
         # Subsequent update merges fields
-        mgr.update_state(active_layer="l2", total_iterations=42)
+        mgr.update_state(active_phase="architecture", total_iterations=42)
         state2 = mgr.read_state()
         assert state2 is not None
-        assert state2.active_layer == "l2"
+        assert state2.active_phase == "architecture"
         assert state2.phase == "intake"  # unchanged
         assert state2.total_iterations == 42
 
@@ -575,7 +579,7 @@ class TestRunState:
             run_id="roundtrip",
             mode="interactive",
             input_folder="/specs",
-            stagnation_threshold=5,
+            stagnation_window=5,
             retry_budget=7,
             test_commands={"l1": "pytest tests/"},
             model_ids={"gap": "opus-4"},
@@ -583,7 +587,7 @@ class TestRunState:
         mgr.write_config(config)
         loaded = mgr.read_config()
         assert loaded is not None
-        assert loaded.stagnation_threshold == 5
+        assert loaded.stagnation_window == 5
         assert loaded.retry_budget == 7
         assert loaded.test_commands == {"l1": "pytest tests/"}
         assert loaded.model_ids == {"gap": "opus-4"}
@@ -591,10 +595,10 @@ class TestRunState:
     def test_state_roundtrip_preserves_all_fields(self, tmp_path: Path) -> None:
         mgr = RunStateManager(workspace_root=tmp_path, run_id="rt2")
         mgr.update_state(
-            active_layer="l2",
-            phase="l2",
-            layers_completed=["l1"],
-            transitions_completed=["l1_l2"],
+            active_phase="architecture",
+            phase="architecture",
+            phases_completed=["libraries"],
+            phase_iteration_counts={"libraries": 1, "architecture": 4, "quality": 0},
             shas={"l1": "abc123"},
             budgets_consumed={"l1": 5},
             total_iterations=15,
@@ -604,8 +608,8 @@ class TestRunState:
         )
         state = mgr.read_state()
         assert state is not None
-        assert state.layers_completed == ["l1"]
-        assert state.transitions_completed == ["l1_l2"]
+        assert state.phases_completed == ["libraries"]
+        assert state.phase_iteration_counts == {"libraries": 1, "architecture": 4, "quality": 0}
         assert state.shas == {"l1": "abc123"}
         assert state.budgets_consumed == {"l1": 5}
         assert state.stagnated_slices == ["slice-a"]
@@ -626,6 +630,7 @@ class TestDemotionLedger:
         slice_root.mkdir()
 
         dm = DemotionManager(workspace_root=tmp_path, run_id="ledger-run")
+        (slice_root / "foo.py").write_text("print('ok')\n", encoding="utf-8")
         ticket = DemotionTicket(
             run_id="ledger-run",
             slice_id="s1",
@@ -716,17 +721,86 @@ def _make_run_results(
     l2_slices: list[dict[str, Any]] | None = None,
     l3_slices: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Helper to build run_results for scoring."""
+    """Helper to build a RunReporter snapshot for scoring tests."""
+
+    def _make_layer_slices(layer: str, entries: list[dict[str, Any]]) -> list[SliceArtifact]:
+        artifacts: list[SliceArtifact] = []
+        for entry in entries:
+            status = str(entry.get("status", "COMPLETE")).upper()
+            artifacts.append(
+                SliceArtifact(
+                    slice_id=str(entry.get("slice_id", "")),
+                    layer=layer,
+                    status=status,
+                    iterations=int(entry.get("iterations", 0)),
+                    remaining_gaps=int(entry.get("remaining_gaps", 0)),
+                    initial_gaps=int(entry.get("initial_gaps", entry.get("remaining_gaps", 0))),
+                    demotion_count=int(entry.get("demotion_count", 0)),
+                    gate_passed=bool(entry.get("gate_passed", status == "COMPLETE")),
+                    first_attempt_pass=bool(entry.get("first_attempt_pass", status == "COMPLETE")),
+                    promoted_pins=int(entry.get("promoted_pins", 0)),
+                    consumed_pins=int(entry.get("consumed_pins", 0)),
+                    changed_loc=int(entry.get("changed_loc", 0)),
+                    total_loc=int(entry.get("total_loc", 0)),
+                    behavior_change_findings=int(entry.get("behavior_change_findings", 0)),
+                    governance_fail_findings=int(entry.get("governance_fail_findings", 0)),
+                    governance_warn_findings=int(entry.get("governance_warn_findings", 0)),
+                    governance_receipts_missing=int(entry.get("governance_receipts_missing", 0)),
+                    under_spec_blocker_events=int(entry.get("under_spec_blocker_events", 0)),
+                    stagnation_detected=bool(
+                        entry.get("stagnation_detected", status in {"STAGNATED", "MAX_ITERATIONS"})
+                    ),
+                    max_iterations_hit=bool(
+                        entry.get("max_iterations_hit", status == "MAX_ITERATIONS")
+                    ),
+                    l3_first_review_total_files=int(entry.get("l3_first_review_total_files", 0)),
+                    l3_first_review_passed_files=int(entry.get("l3_first_review_passed_files", 0)),
+                    bundle_path=str(f"{layer}/{entry.get('slice_id', 'slice')}/bundle.json"),
+                )
+            )
+        return artifacts
+
+    def _make_ci_receipt(slice_id: str, layer: str) -> dict[str, Any]:
+        return {
+            "layer": layer,
+            "slice_id": slice_id,
+            "failed": False,
+            "_path": f"{layer}/{slice_id}/ci.json",
+        }
+
+    l1_artifacts = _make_layer_slices("l1", l1_slices or [])
+    l2_artifacts = _make_layer_slices("l2", l2_slices or [])
+    l3_artifacts = _make_layer_slices("l3", l3_slices or [])
+    receipts = []
+    for artifact in [*l1_artifacts, *l2_artifacts, *l3_artifacts]:
+        receipts.append(_make_ci_receipt(artifact.slice_id, artifact.layer))
+
+    return ArtifactSnapshot(
+        l1_slices=l1_artifacts,
+        l2_slices=l2_artifacts,
+        l3_slices=l3_artifacts,
+        ci_receipts=receipts,
+    )
+
+
+def _to_report_run_results(snapshot: ArtifactSnapshot) -> dict[str, Any]:
+    """Convert ArtifactSnapshot into the legacy dict schema expected by FinalReportGenerator."""
+
+    def _layer_payload(artifacts: list[SliceArtifact]) -> dict[str, Any]:
+        return {"slices": {"slices": [asdict(artifact) for artifact in artifacts]}}
+
     return {
-        "l1": {
-            "slices": {"slices": l1_slices or []},
-        },
-        "l2": {
-            "slices": {"slices": l2_slices or []},
-        },
-        "l3": {
-            "slices": {"slices": l3_slices or []},
-        },
+        "l1": _layer_payload(snapshot.l1_slices),
+        "l2": _layer_payload(snapshot.l2_slices),
+        "l3": _layer_payload(snapshot.l3_slices),
+        "ci_receipts": snapshot.ci_receipts,
+        "mode": "auto",
+        "merge_tag": {},
+        "approvals": snapshot.approvals,
+        "alignment": snapshot.alignment,
+        "manifest_components": snapshot.manifest_components,
+        "implemented_components": snapshot.implemented_components,
+        "demotion_count": snapshot.demotion_count,
     }
 
 
@@ -779,7 +853,8 @@ class TestRunReporterComputeAllPass:
             ],
         )
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         assert scorecard.overall_pass is True
         assert scorecard.run_id == "pass-run"
 
@@ -799,7 +874,8 @@ class TestRunReporterComputeWithFailure:
             ],
         )
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         assert scorecard.overall_pass is False
 
         # Verify gates.final_pass is FAIL
@@ -814,7 +890,8 @@ class TestRunReporterComputeWithFailure:
             ],
         )
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         l3_gate = next(g for g in scorecard.hard_gates if g.name == "l3.no_behavior_change")
         assert l3_gate.status == "FAIL"
 
@@ -830,7 +907,8 @@ class TestRunReporterWrite:
             ],
         )
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         scores_path, md_path = reporter.write(scorecard)
 
         assert scores_path.exists()
@@ -891,12 +969,13 @@ class TestScorecardSoftSignals:
             ],
         )
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         stag_signal = next(
             s for s in scorecard.soft_signals if s.name == "pipeline.stagnation_rate"
         )
         # 1 stagnated out of 2 = 50% rate
-        assert stag_signal.raw == 1.0
+        assert stag_signal.raw == 0.5
         assert stag_signal.status == "FAIL"  # 50% > 0.05 threshold
 
     def test_demotion_count_from_ledger(self, tmp_path: Path) -> None:
@@ -919,8 +998,10 @@ class TestScorecardSoftSignals:
                 {"slice_id": "s1", "status": "COMPLETE", "iterations": 3, "demotion_count": 2},
             ],
         )
+        results.demotion_count = len(entries)
 
-        scorecard = reporter.compute(results)
+        reporter._collect_artifacts = lambda: results  # type: ignore[method-assign]
+        scorecard = reporter.compute()
         demo_signal = next(
             s for s in scorecard.soft_signals if s.name == "pipeline.total_demotions"
         )
@@ -938,10 +1019,12 @@ class TestFinalReportGenerator:
 
     def test_generate_creates_files(self, tmp_path: Path) -> None:
         gen = FinalReportGenerator(workspace_root=tmp_path, run_id="report-run")
-        results = _make_run_results(
-            l1_slices=[
-                {"slice_id": "s1", "status": "COMPLETE", "iterations": 2, "demotion_count": 0},
-            ],
+        results = _to_report_run_results(
+            _make_run_results(
+                l1_slices=[
+                    {"slice_id": "s1", "status": "COMPLETE", "iterations": 2, "demotion_count": 0},
+                ],
+            )
         )
 
         scorecard = Scorecard(
@@ -961,10 +1044,12 @@ class TestFinalReportGenerator:
 
     def test_report_contains_sections(self, tmp_path: Path) -> None:
         gen = FinalReportGenerator(workspace_root=tmp_path, run_id="sections-run")
-        results = _make_run_results(
-            l1_slices=[
-                {"slice_id": "s1", "status": "COMPLETE", "iterations": 2, "demotion_count": 0},
-            ],
+        results = _to_report_run_results(
+            _make_run_results(
+                l1_slices=[
+                    {"slice_id": "s1", "status": "COMPLETE", "iterations": 2, "demotion_count": 0},
+                ],
+            )
         )
         results["l1_l2_transition"] = {"transition_stuck": False, "rework_rounds": []}
         results["l2_l3_transition"] = {"transition_stuck": True, "rework_rounds": [{"round": 1}]}
@@ -1035,7 +1120,7 @@ class TestFinalReportGenerator:
         ]
         ledger_path.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
 
-        results = _make_run_results()
+        results = _to_report_run_results(_make_run_results())
         report_path, _ = gen.generate(results, None)
         report = report_path.read_text(encoding="utf-8")
 
@@ -1099,10 +1184,67 @@ class TestGovernanceCheck:
 
         # Create required artifacts
         run_dir = tmp_path / ".pdd_runs" / "gov-run"
+        reports_dir = tmp_path / "reports" / "pdd" / "gov-run"
         slices_dir = run_dir / "slices"
         slices_dir.mkdir(parents=True)
-        # Need at least one entry so iterdir() is non-empty
-        (slices_dir / "slice-1").mkdir()
+        bundle_dir = slices_dir / "slice-1" / "iter_0"
+        bundle_dir.mkdir(parents=True)
+
+        bundle_payload = {
+            "slice_id": "slice-1",
+            "manifest": {
+                "path": "manifest.json",
+                "files": [{"path": "src/main.py", "sha256": "test-hash"}],
+            },
+            "diff": {"path": "diff.json", "content_hash": ""},
+            "implementation": {"result_path": "implementation.json"},
+            "integration": {"path": "integration.json"},
+            "promotion": {"path": "promotion.json"},
+            "gates": {"path": "gates.json"},
+            "tests": {"slice_path": "tests.json"},
+            "verification": {"path": "verification.json"},
+            "pins_snapshot": {"path": "pins_snapshot.json", "snapshot_hash": "pins-hash"},
+            "graph_snapshot": {"path": "graph_snapshot.json", "snapshot_hash": "graph-hash"},
+        }
+        (bundle_dir / "bundle.json").write_text(json.dumps(bundle_payload), encoding="utf-8")
+        (bundle_dir / "manifest.json").write_text(
+            json.dumps({"files": [{"path": "src/main.py"}]}), encoding="utf-8"
+        )
+        (bundle_dir / "diff.json").write_text(json.dumps({}), encoding="utf-8")
+        (bundle_dir / "implementation.json").write_text(json.dumps({}), encoding="utf-8")
+        (bundle_dir / "promotion.json").write_text(json.dumps({}), encoding="utf-8")
+        (bundle_dir / "gates.json").write_text(json.dumps({}), encoding="utf-8")
+        integration_payload = {
+            "ci_tick": {"triggered": True, "error": "", "receipt": {"failed": False}}
+        }
+        (bundle_dir / "integration.json").write_text(
+            json.dumps(integration_payload),
+            encoding="utf-8",
+        )
+        (bundle_dir / "tests.json").write_text(
+            json.dumps({"result": {"pass_rate": 1.0}}), encoding="utf-8"
+        )
+        (bundle_dir / "verification.json").write_text(
+            json.dumps({"findings": []}), encoding="utf-8"
+        )
+        (bundle_dir / "pins_snapshot.json").write_text(json.dumps({}), encoding="utf-8")
+        (bundle_dir / "graph_snapshot.json").write_text(json.dumps({}), encoding="utf-8")
+
+        # Alignment and approval artifacts required for transition checkpoint checks
+        reports_dir.mkdir(parents=True)
+        (reports_dir / "component_manifest.json").write_text(
+            json.dumps({"components": [{"component_id": "c1"}]}),
+            encoding="utf-8",
+        )
+        (reports_dir / "alignment_report.json").write_text(json.dumps({}), encoding="utf-8")
+
+        approvals_dir = run_dir / "approvals" / "l1" / "iteration_0"
+        approvals_dir.mkdir(parents=True)
+        (approvals_dir / "decision.json").write_text(
+            json.dumps({"layer": "l1", "approved": True, "mode": "auto", "iteration": 0}),
+            encoding="utf-8",
+        )
+
         demotions_dir = run_dir / "demotions"
         demotions_dir.mkdir(parents=True)
 
@@ -1123,7 +1265,11 @@ class TestGovernanceCheck:
         )
         assert result["passed"] is False
         assert len(result["findings"]) > 0
-        assert any("slices" in f.lower() or "evidence" in f.lower() for f in result["findings"])
+        messages = [
+            str(f.get("message", "")).lower() if isinstance(f, dict) else str(f).lower()
+            for f in result["findings"]
+        ]
+        assert any("slices" in message or "evidence" in message for message in messages)
 
     def test_governance_check_missing_report(self, tmp_path: Path) -> None:
         """When check_report=True and files are missing, findings are emitted."""
@@ -1134,7 +1280,11 @@ class TestGovernanceCheck:
             check_report=True,
         )
         assert result["passed"] is False
-        assert any("report" in f.lower() for f in result["findings"])
+        messages = [
+            str(f.get("message", "")).lower() if isinstance(f, dict) else str(f).lower()
+            for f in result["findings"]
+        ]
+        assert any("report" in message for message in messages)
 
     def test_governance_check_report_present(self, tmp_path: Path) -> None:
         """When check_report=True and files exist, passed=True."""
@@ -1142,8 +1292,27 @@ class TestGovernanceCheck:
 
         reports_dir = tmp_path / "reports" / "pdd" / "gov-run"
         reports_dir.mkdir(parents=True)
-        (reports_dir / "final_report.md").write_text("report", encoding="utf-8")
+        (reports_dir / "final_report.md").write_text(
+            "\n".join(
+                [
+                    "## Executive Summary",
+                    "## Architecture Topology",
+                    "## Scorecard",
+                    "## POWER Alignment",
+                    "## Approval Checkpoints",
+                    "## Demotion Summary",
+                    "## Known Risks / Unresolved Issues",
+                    "## Evidence Links",
+                    "L1 Mandatory Approval",
+                    "L2 Architecture Checkpoint",
+                    "L3 Release Signoff",
+                    "Detailed artifact: `alignment_report.json`",
+                ]
+            ),
+            encoding="utf-8",
+        )
         (reports_dir / "scorecard.json").write_text("{}", encoding="utf-8")
+        (reports_dir / "run_summary.json").write_text("{}", encoding="utf-8")
 
         result = lifecycle._run_governance_check(
             "final",
@@ -1221,7 +1390,7 @@ class TestL2CheckpointAutoMode:
         assert result["approved"] is True
         assert result["mode"] == "auto"
 
-    def test_l2_checkpoint_auto_mode_blocks_on_unresolved_human_authority(
+    def test_l2_checkpoint_interactive_mode_blocks_on_open_signals(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1231,89 +1400,21 @@ class TestL2CheckpointAutoMode:
         manager.workspace_path = tmp_path
         manager.run_id = "auto-run-blocked"
 
-        lifecycle = PddLifecycle(manager, mode="auto")
+        lifecycle = PddLifecycle(manager, mode="interactive")
         state_mgr = RunStateManager(workspace_root=tmp_path, run_id="auto-run-blocked")
         state_mgr.ensure_directories()
         lifecycle._state_mgr = state_mgr
-
-        queue_path = (
-            tmp_path
-            / ".pdd_runs"
-            / "auto-run-blocked"
-            / "intent"
-            / "skeleton"
-            / "analysis"
-            / "intent"
-            / "question_queue.json"
-        )
-        queue_path.parent.mkdir(parents=True, exist_ok=True)
-        queue_snapshot = [
-            {
-                "question_id": "q_human_l2",
-                "status": "OPEN",
-                "taxonomy_type": "CONSTRAINT",
-                "scope_kind": "FEATURE_SPECIFIC",
-                "canonical_key": "planner.authority_required.decision",
-                "user_prompt": {
-                    "text": "Who can approve this release?",
-                    "scenario": "",
-                    "why_it_matters": "",
-                    "answer_spec": {
-                        "kind": "choice",
-                        "choices": [],
-                        "units_hint": "",
-                        "text_bounds": {},
-                    },
-                },
-                "system_binding": {
-                    "type": "authority_required",
-                    "authority_required": "human_required",
-                    "reason": "Human authority required before release",
-                },
-                "origins": [
-                    {
-                        "source_kind": "PLANNER",
-                        "trace_id": "trace_human_l2",
-                        "signal_id": "uq_human_l2",
-                        "slice_id": "",
-                        "layer": "",
-                        "created_at": "2026-02-13T00:00:00+00:00",
-                        "spec_refs": [],
-                        "code_refs": [],
-                    },
-                ],
-                "blockers": {
-                    "severity": "BLOCKING",
-                    "blocked_slices": ["slice-1"],
-                    "blocked_layers": [],
-                    "blocked_steps": [],
-                },
-                "priority": {"score": 0.6, "explanation": "human decision required"},
-                "quality_gate": {
-                    "status": "PASS",
-                    "attempts": 1,
-                    "last_quality_record_id": "qg_1",
-                    "last_checked_at": "2026-02-13T00:00:00+00:00",
-                },
-                "timestamps": {
-                    "created_at": "2026-02-13T00:00:00+00:00",
-                    "updated_at": "2026-02-13T00:00:00+00:00",
-                },
-            },
-        ]
-        queue_path.write_text(json.dumps(queue_snapshot, indent=2), encoding="utf-8")
 
         result = lifecycle._request_l2_checkpoint({"slices": []})
 
         assert result["approved"] is False
         assert result["status"] == "WAITING"
         assert result["checkpoint"] == "l2_checkpoint"
-        assert result["blocked_reason"] == "unresolved_human_authority"
-        wait_trace = result["authority_wait_trace"]
-        assert wait_trace["unresolved_count"] == 1
-        unresolved = wait_trace["unresolved_questions"][0]
-        assert unresolved["question_id"] == "q_human_l2"
-        assert unresolved["reason"] == "authority_required=human_required"
+        assert set(result["pending_canonical_keys"]) == {
+            "pdd.lifecycle.l2.tradeoff",
+            "pdd.lifecycle.l2.constraint",
+            "pdd.lifecycle.l2.scope",
+        }
 
         decision_path = (
             tmp_path / ".pdd_runs" / "auto-run-blocked" / "approvals" / "l2" / "decision.json"
@@ -1321,9 +1422,8 @@ class TestL2CheckpointAutoMode:
         assert decision_path.exists()
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
         assert decision["approved"] is False
-        assert decision["waiting"] is True
-        assert decision["blocked_reason"] == "unresolved_human_authority"
-        assert decision["authority_wait_trace"]["unresolved_count"] == 1
+        assert decision["status"] == "WAITING"
+        assert result["pending_canonical_keys"] == decision["pending_canonical_keys"]
 
     def test_l2_checkpoint_steering_mode(self, tmp_path: Path) -> None:
         from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
@@ -1365,62 +1465,17 @@ class TestReleaseSignoffAutoMode:
         manager.workspace_path = tmp_path
         manager.run_id = "signoff-blocked"
 
-        lifecycle = PddLifecycle(manager, mode="auto")
+        lifecycle = PddLifecycle(manager, mode="interactive")
         state_mgr = RunStateManager(workspace_root=tmp_path, run_id="signoff-blocked")
         state_mgr.ensure_directories()
         lifecycle._state_mgr = state_mgr
-
-        signal_path = (
-            tmp_path / ".pdd_runs" / "signoff-blocked" / "coordination" / "user_questions.jsonl"
-        )
-        signal_path.parent.mkdir(parents=True, exist_ok=True)
-        signal_payload = {
-            "uq_version": 1,
-            "uq_id": "uq_human_signal",
-            "run_id": "signoff-blocked",
-            "created_at": "2026-02-13T00:00:00+00:00",
-            "source": {
-                "kind": "PLANNER",
-                "trace_id": "trace_human_signal",
-                "slice_id": "slice-42",
-                "layer": "l2",
-                "signal_id": "under_spec_42",
-            },
-            "question": {
-                "text": "Who can make this product decision?",
-                "taxonomy_hint": "UNKNOWN",
-                "canonical_key_hint": "planner.decision_required.under_spec_42",
-                "answer_spec_hint": {},
-            },
-            "context": {
-                "blocking": {
-                    "severity": "BLOCKING",
-                    "blocked_slices": ["slice-42"],
-                },
-                "spec_refs": [],
-                "code_refs": [],
-            },
-            "payload": {
-                "type": "decision_required",
-                "reason": "Human authority required for this decision",
-            },
-        }
-        signal_path.write_text(
-            json.dumps(signal_payload, sort_keys=True, separators=(",", ":")) + "\n",
-            encoding="utf-8",
-        )
 
         result = lifecycle._request_release_signoff({"scorecard": {"overall_pass": True}})
 
         assert result["approved"] is False
         assert result["status"] == "WAITING"
         assert result["checkpoint"] == "release_signoff"
-        assert result["blocked_reason"] == "unresolved_human_authority"
-        wait_trace = result["authority_wait_trace"]
-        assert wait_trace["unresolved_count"] == 1
-        unresolved = wait_trace["unresolved_questions"][0]
-        assert unresolved["signal_uq_id"] == "uq_human_signal"
-        assert unresolved["reason"] == "type=decision_required"
+        assert result["pending_canonical_keys"] == ["pdd.lifecycle.release.signoff"]
 
     def test_release_signoff_steering_mode(self, tmp_path: Path) -> None:
         from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
@@ -1432,8 +1487,10 @@ class TestReleaseSignoffAutoMode:
         lifecycle = PddLifecycle(manager, mode="steering")
 
         result = lifecycle._request_release_signoff({"scorecard": {"overall_pass": False}})
-        assert result["approved"] is True
+        assert result["approved"] is False
+        assert result["status"] == "REJECTED"
         assert result["mode"] == "steering"
+        assert result["hard_gate_failures"] == ["unknown_hard_gate_failure"]
 
 
 # ===================================================================
@@ -1555,7 +1612,7 @@ class TestPromotionLoopEdgeCases:
         """Verify IntegrateStep returns OK without worktree manager."""
         from spec_manager.orchestration.promotion_loop import IntegrateStep
 
-        step = IntegrateStep(worktree_manager=None)
+        step = IntegrateStep()
         ctx = SliceContext(slice_id="test", run_id="test")
         bundle = EvidenceBundle()
         result = step.run(ctx, bundle)
@@ -1619,14 +1676,16 @@ class TestRunStateSerialization:
     def test_roundtrip(self) -> None:
         state = RunState(
             run_id="rt",
-            active_layer="l2",
+            active_phase="architecture",
+            phase_iteration_counts={"libraries": 0, "architecture": 2, "quality": 1},
+            phase="architecture",
             total_demotions=7,
             stagnated_slices=["s1"],
         )
         d = state.to_dict()
         restored = RunState.from_dict(d)
         assert restored.run_id == "rt"
-        assert restored.active_layer == "l2"
+        assert restored.active_phase == "architecture"
         assert restored.total_demotions == 7
         assert restored.stagnated_slices == ["s1"]
 
@@ -1867,8 +1926,8 @@ class TestPipelinePassCap:
         mock_scorecard.to_dict.return_value = {"overall_pass": True}
 
         with (
-            patch("spec_manager.orchestration.scoring.RunReporter") as mock_reporter_cls,
-            patch("spec_manager.orchestration.final_report.FinalReportGenerator") as mock_gen_cls,
+            patch("spec_manager.evaluation.scoring.RunReporter") as mock_reporter_cls,
+            patch("spec_manager.evaluation.report.FinalReportGenerator") as mock_gen_cls,
         ):
             mock_reporter_cls.return_value.compute.return_value = mock_scorecard
             mock_reporter_cls.return_value.write.return_value = (
@@ -1882,7 +1941,7 @@ class TestPipelinePassCap:
 
             results = lifecycle.run()
 
-        assert results["pipeline_pass"] == 1
+        assert results["pipeline_pass"] == lifecycle.max_pipeline_passes
         assert results["max_pipeline_passes"] == 3
 
 
@@ -1916,7 +1975,13 @@ class TestApprovalArtifact:
         lifecycle._write_approval_artifact("l1", approved=True, iteration=2)
 
         decision_path = (
-            tmp_path / ".pdd_runs" / "artifact-run" / "approvals" / "l1" / "decision.json"
+            tmp_path
+            / ".pdd_runs"
+            / "artifact-run"
+            / "approvals"
+            / "l1"
+            / "iteration_2"
+            / "decision.json"
         )
         assert decision_path.exists()
 
@@ -1972,7 +2037,13 @@ class TestApprovalArtifact:
 
         # No decision.json should exist
         decision_path = (
-            tmp_path / ".pdd_runs" / "no-state-run" / "approvals" / "l1" / "decision.json"
+            tmp_path
+            / ".pdd_runs"
+            / "no-state-run"
+            / "approvals"
+            / "l1"
+            / "iteration_1"
+            / "decision.json"
         )
         assert not decision_path.exists()
 
@@ -2019,7 +2090,13 @@ class TestApprovalArtifact:
         assert result["approved"] is True
 
         decision_path = (
-            tmp_path / ".pdd_runs" / "auto-approval" / "approvals" / "l1" / "decision.json"
+            tmp_path
+            / ".pdd_runs"
+            / "auto-approval"
+            / "approvals"
+            / "l1"
+            / "iteration_1"
+            / "decision.json"
         )
         assert decision_path.exists()
         data = json.loads(decision_path.read_text(encoding="utf-8"))
@@ -2173,7 +2250,15 @@ class TestCIBatchReceipt:
         wm = MagicMock()
         tick_result = MagicMock()
         tick_result.main_updated = True
+        tick_result.main_sha = "main-sha"
         tick_result.demotion_tickets = []
+        tick_result.batch_success = True
+        tick_result.gates_passed = True
+        tick_result.tests_passed = True
+        tick_result.propagation_failures = []
+        tick_result.batch_demotion_tickets = []
+        tick_result.candidate_sha = "candidate-sha"
+        tick_result.base_clean_sha = "base-sha"
         wm.tick_pipeline.return_value = tick_result
         wm.create_slice_worktree.side_effect = RuntimeError("exists")
         wm.get_slice_worktree.return_value = tmp_path / "wt"

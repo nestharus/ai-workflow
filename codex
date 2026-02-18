@@ -8,4 +8,4 @@
 #   ./codex [args...]    - Runs: codex --yolo [args...]
 #   codex [args...]      - Standard codex (use this if you don't want --yolo)
 
-codex --yolo "$@"
+codex --dangerously-bypass-approvals-and-sandbox "$@"

@@ -1,13 +1,13 @@
 """Demotion chain: gate/test failure to concrete edit targets.
 
-Replaces the old layer-oriented model with a phase-oriented
-``PhaseId`` model (`libraries`, `architecture`, `quality`).
+Replaces the old "skip atom" behavior with "demote atom → patch L1 →
+GapQueue → re-loop".
 
 Key types:
 - DemotionTicket: concrete edit target produced by gate/test failures
 - RoutingItem: content that needs Phase 0 routing
 - RoutedPatch: result of routing a single item
-- DemotionManager: applies tickets to the target phase
+- DemotionManager: applies tickets to the target layer
 """
 
 from __future__ import annotations
@@ -24,37 +24,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.core.gap import GapEvidence, GapSynthesizer
 
 logger = logging.getLogger(__name__)
 
 
-def _default_ticket_phase(raw: Any, fallback: PhaseId) -> PhaseId:
-    if isinstance(raw, str):
-        value = raw.strip().lower()
-        if value in {"libraries", "architecture", "quality"}:
-            return value
-    return fallback
-
-
-def _ticket_id() -> str:
-    return uuid.uuid4().hex[:12]
-
-
-def _now_iso8601() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 @dataclass
 class DemotionTicket:
-    """A concrete demotion produced by gate/test/verify failure."""
+    """A concrete demotion produced by gate/test/verify failure.
 
-    # IMPL(single-layer): Layer-target fields were replaced with phase fields
-    # (`target_layer` -> `target_phase`, `origin_layer` -> `origin_phase`)
-    # to match `compliance.promotion.config.PhaseId`.
-    ticket_id: str = field(default_factory=_ticket_id)
-    created_at: str = field(default_factory=_now_iso8601)
+    Instead of skipping an atom that fails a gate, the system produces
+    a DemotionTicket that becomes an actionable edit target at the
+    appropriate layer.
+    """
+
+    ticket_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     run_id: str = ""
     slice_id: str = ""
 
@@ -65,15 +50,15 @@ class DemotionTicket:
         "LINEAGE",
         "REVIEW",
     ] = "ALGORITHMIC_GATE"
-    category: str = ""
+    category: str = ""  # style | maintainability | architecture | logic | drift | governance
     gate: str | None = None
 
-    target_phase: PhaseId = "libraries"
+    target_layer: Literal["L1", "L2", "L3"] = "L1"
     severity: Literal["BLOCKER", "MAJOR", "MINOR"] = "BLOCKER"
 
-    # Multi-phase traceability
-    origin_phase: PhaseId = "libraries"
-    hop_trace: list[PhaseId] = field(default_factory=list)
+    # Multi-layer traceability
+    origin_layer: Literal["L1", "L2", "L3"] = "L1"
+    hop_trace: list[Literal["L1", "L2", "L3"]] = field(default_factory=list)
 
     failing_pins: list[str] = field(default_factory=list)
     failing_atoms: list[str] = field(default_factory=list)
@@ -95,10 +80,6 @@ class DemotionTicket:
     apply_status: Literal["PENDING", "APPLIED", "REJECTED", "BLOCKED"] = "PENDING"
     applied_patch_paths: list[str] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
-        self.target_phase = _default_ticket_phase(self.target_phase, "libraries")
-        self.origin_phase = _default_ticket_phase(self.origin_phase, self.target_phase)
-
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
         import dataclasses
@@ -108,23 +89,20 @@ class DemotionTicket:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DemotionTicket:
         """Deserialize from a dict."""
-        dataclass_fields = {f.name for f in __import__("dataclasses").fields(cls)}
-        values: dict[str, Any] = {
-            k: v for k, v in data.items() if k in dataclass_fields
-        }
-        ticket = cls(**values)
-        if raw_target := data.get("target_phase"):
-            ticket.target_phase = _default_ticket_phase(raw_target, ticket.target_phase)
-        if raw_origin := data.get("origin_phase"):
-            ticket.origin_phase = _default_ticket_phase(raw_origin, ticket.origin_phase)
-        return ticket
+        return cls(
+            **{
+                k: v
+                for k, v in data.items()
+                if k in {f.name for f in __import__("dataclasses").fields(cls)}
+            }
+        )
 
 
 @dataclass
 class RoutingItem:
     """Content that needs Phase 0 routing into L1 code-as-spec."""
 
-    item_id: str = field(default_factory=_ticket_id)
+    item_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     text: str = ""
     source_path: str | None = None
     desired_slice_hint: str | None = None
@@ -141,7 +119,15 @@ class RoutedPatch:
 
 
 class DemotionManager:
-    """Applies DemotionTickets to the target phase."""
+    """Applies DemotionTickets to the target layer.
+
+    Replaces "skip atom" with "demote → patch → GapQueue → loop".
+
+    Usage::
+
+        manager = DemotionManager(workspace_root=Path("."))
+        results = manager.apply(ticket, slice_root=Path("..."))
+    """
 
     def __init__(
         self,
@@ -167,7 +153,23 @@ class DemotionManager:
         branch_manager: Any | None = None,
         routing_callback: Callable[[list[RoutingItem], Path], list[RoutedPatch]] | None = None,
     ) -> dict[str, Any]:
-        """Apply a demotion ticket to the target phase."""
+        """Apply a demotion ticket to the target layer.
+
+        Steps:
+        1. Apply recommended patch (spec or code) if present.
+        2. Otherwise, generate a minimal gap stub.
+        3. Update registries (mark atoms/pins as demoted).
+        4. Feed GapQueue with new evidence.
+        5. Handle routing hook if needed.
+        6. Record lineage.
+
+        Args:
+            ticket: The demotion ticket to apply.
+            slice_root: Root of the slice worktree.
+
+        Returns:
+            Application result dict.
+        """
         result: dict[str, Any] = {
             "ticket_id": ticket.ticket_id,
             "applied": False,
@@ -178,7 +180,7 @@ class DemotionManager:
             "errors": [],
         }
         if not ticket.hop_trace:
-            ticket.hop_trace = [ticket.origin_phase, ticket.target_phase]
+            ticket.hop_trace = [ticket.origin_layer, ticket.target_layer]
 
         # 1. Apply patch directly in the slice worktree
         if ticket.recommended_spec_patch:
@@ -190,7 +192,7 @@ class DemotionManager:
             if patch_error:
                 result["errors"].append(patch_error)
             result["applied"] = bool(applied)
-        elif ticket.recommended_code_patch and ticket.target_phase == "quality":
+        elif ticket.recommended_code_patch and ticket.target_layer == "L3":
             applied, patch_path, patch_error = self._apply_recommended_patch(
                 ticket, slice_root, ticket.recommended_code_patch, "code"
             )
@@ -200,7 +202,7 @@ class DemotionManager:
                 result["errors"].append(patch_error)
             result["applied"] = bool(applied)
         else:
-            # Generate minimal in-file phase 1 annotation so GAP_EXPLORATION can see it.
+            # Generate minimal in-file L1 annotation so GAP_EXPLORATION can see it.
             annotation_path = self._generate_gap_stub(ticket, slice_root)
             if annotation_path:
                 result["patches"].append(str(annotation_path))
@@ -335,7 +337,7 @@ class DemotionManager:
         ticket: DemotionTicket,
         slice_root: Path,
     ) -> Path | None:
-        """Insert a minimal in-file SPEC REQUIRED annotation in Phase 1 code-as-spec."""
+        """Insert a minimal in-file SPEC REQUIRED annotation in L1 code-as-spec."""
         target_file = ""
         if ticket.symbol_span_anchors:
             for anchor in ticket.symbol_span_anchors:
@@ -359,7 +361,7 @@ class DemotionManager:
             f"{prefix} SPEC REQUIRED [{ticket.ticket_id}]",
             (
                 f"{prefix} source={ticket.source} gate={ticket.gate or 'N/A'} "
-                f"severity={ticket.severity} phase={ticket.target_phase}"
+                f"severity={ticket.severity}"
             ),
         ]
         if ticket.failing_pins:
@@ -426,7 +428,6 @@ class DemotionManager:
                 "source_kind": ticket.source,
                 "gate": ticket.gate or "",
                 "severity": ticket.severity,
-                "phase": ticket.target_phase,
                 "failing_pins": list(ticket.failing_pins),
                 "failing_atoms": list(ticket.failing_atoms),
                 "component_id": ticket.component_id,
@@ -436,8 +437,7 @@ class DemotionManager:
             evidence.append(
                 GapEvidence(
                     invariant_family="demotion_ticket",
-                    description=ticket.diagnosis
-                    or "Demotion ticket generated new gap evidence",
+                    description=ticket.diagnosis or "Demotion ticket generated new gap evidence",
                     details=details,
                     location=file_path,
                     detector="demotion.manager",
@@ -445,12 +445,7 @@ class DemotionManager:
             )
         return evidence
 
-    def _feed_gap_queue(
-        self,
-        evidence: list[GapEvidence],
-        *,
-        gap_queue: Any | None = None,
-    ) -> None:
+    def _feed_gap_queue(self, evidence: list[GapEvidence], *, gap_queue: Any | None = None) -> None:
         queue = gap_queue if gap_queue is not None else self._gap_queue
         if queue is None or not evidence:
             return
@@ -485,24 +480,12 @@ class DemotionManager:
                 if not normalized:
                     continue
                 try:
-                    demote_atom(normalized, to_phase=ticket.target_phase)
+                    demote_atom(normalized, to_layer=ticket.target_layer)
                     updates.append(
-                        f"branch_manager.demote_atom({normalized}->{ticket.target_phase})"
+                        f"branch_manager.demote_atom({normalized}->{ticket.target_layer})"
                     )
-                except Exception:
-                    try:
-                        demote_atom(normalized, to_layer=ticket.target_phase)
-                        updates.append(
-                            f"branch_manager.demote_atom({normalized}->{ticket.target_phase})"
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed demote_atom(%s): %s",
-                            normalized,
-                            exc,
-                        )
-                else:
-                    continue
+                except Exception as exc:
+                    logger.warning("Failed demote_atom(%s): %s", normalized, exc)
         else:
             get_atom = getattr(manager, "get_atom", None)
             register_atom = getattr(manager, "register_atom", None)
@@ -514,9 +497,7 @@ class DemotionManager:
                     atom = get_atom(normalized)
                     if atom is None:
                         continue
-                    marker = (
-                        f"demoted:{ticket.ticket_id}:{ticket.target_phase}"
-                    )
+                    marker = f"demoted:{ticket.ticket_id}:{ticket.target_layer}"
                     modified = list(getattr(atom, "modified_by", []) or [])
                     if marker not in modified:
                         modified.append(marker)
@@ -526,9 +507,7 @@ class DemotionManager:
                             updates.append(f"atom_registry.mark_demoted({normalized})")
                         except Exception as exc:
                             logger.warning(
-                                "Failed to persist atom demotion marker for %s: %s",
-                                normalized,
-                                exc,
+                                "Failed to persist atom demotion marker for %s: %s", normalized, exc
                             )
 
         pin_registry = getattr(manager, "pin_registry", None)
@@ -591,6 +570,7 @@ class DemotionManager:
                 continue
             applied_paths.append(path)
             ticket.applied_patch_paths.append(path)
+            # If routing produced a unified diff, apply it to the slice immediately.
             patch_file = Path(path)
             if patch_file.exists() and patch_file.is_file():
                 temp_patch: Path | None = None
@@ -629,15 +609,11 @@ class DemotionManager:
                                 ticket.applied_patch_paths.append(str(temp_patch))
                             else:
                                 logger.warning(
-                                    "Failed applying routed patch %s: %s",
-                                    temp_patch,
-                                    apply.stderr,
+                                    "Failed applying routed patch %s: %s", temp_patch, apply.stderr
                                 )
                 except Exception as exc:
                     logger.warning(
-                        "Failed processing routed patch artifact %s: %s",
-                        patch_file,
-                        exc,
+                        "Failed processing routed patch artifact %s: %s", patch_file, exc
                     )
                 finally:
                     if isinstance(temp_patch, Path) and temp_patch.exists():
@@ -697,7 +673,7 @@ class DemotionManager:
         )
 
         ledger_path = ledger_dir / "ledger.jsonl"
-        hop_trace = ticket.hop_trace or [ticket.origin_phase, ticket.target_phase]
+        hop_trace = ticket.hop_trace or [ticket.origin_layer, ticket.target_layer]
         entry = {
             "ticket_id": ticket.ticket_id,
             "run_id": run_id,
@@ -706,8 +682,8 @@ class DemotionManager:
             "source": ticket.source,
             "category": ticket.category,
             "gate": ticket.gate,
-            "origin_phase": ticket.origin_phase,
-            "target_phase": ticket.target_phase,
+            "origin_layer": ticket.origin_layer,
+            "target_layer": ticket.target_layer,
             "hop_trace": hop_trace,
             "severity": ticket.severity,
             "diagnosis": ticket.diagnosis[:500],

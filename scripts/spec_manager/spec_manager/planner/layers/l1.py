@@ -1,38 +1,3 @@
-# TODO(single-layer): RESTRUCTURE -> merge into Libraries phase planner. L1's skeleton
-#   analysis (discover functions, spec comments, produce implementation intentions)
-#   is what the Libraries phase does. The L1DiscoveryRouter and L1IntentionPlanner
-#   logic survives as the Libraries phase's discovery/planning strategy. Remove layer
-#   naming; this becomes the primary "discover what needs implementing" capability.
-# ALGORITHM(single-layer):
-#   References: response3 Sections 8 and 9; evaluation modifications #3 and #5.
-#   Data structures:
-#     - Rename planner identity to LibrariesPhasePlanner while preserving discovery/planning payload shapes.
-#     - LibrariesIntent: {shape_id: ShapeId|None, file_targets: list[str], function_targets: list[str], required_change_type: str, spec_refs: list[str]}.
-#   Interface contracts:
-#     - def discover(self, ctx: PlanningContext) -> dict[str, Any]
-#     - def build_plan(self, ctx: PlanningContext, gaps: list[dict[str, Any]], discovery: dict[str, Any]) -> dict[str, Any]
-#   Control flow:
-#     1. Iteration 1: discover from spec skeleton/decomposition inputs (L1 behaviors).
-#     2. Later iterations: consume queued libraries-phase work items and shape-scoped gaps.
-#     3. Preserve under-spec resolution strategy and work-item monitor generation.
-#     4. When intent changes shape contracts or shape docs, emit automatic verifier-create/update work item.
-#     5. Libraries phase edits code via PromotionLoop IMPLEMENT step (Gap: algorithmic gaps;
-#        Plan/Implement: create/edit code+tests; Promote/Verify: deterministic verifiers + routing signals).
-#   Error handling:
-#     - Missing slice root/spec catalog emits under-spec block, not guessed plan.
-#   Integration points:
-#     - Selected by PhaseRouter for phase='libraries'.
-#     - Emits WorkItem payloads consumed by implementation runner.
-# IMPL(single-layer): Libraries intent/work-item emission should adopt the shared
-# contract (`shape_id`, `created_in_phase='libraries'`, `required_change_type`,
-# `evidence_refs`, `verifier_ids`) and use `WorkItemStore.create/upsert`; when
-# shape docs change (`requires_verifier_refresh=True`), emit verifier-refresh work
-# items keyed to the same `shape_id`.
-#   Test requirements:
-#     - First-pass spec-driven discovery.
-#     - Subsequent-pass work-item-driven planning.
-#     - Verifier-refresh work item emitted on shape changes.
-
 """L1 layer planner — code-as-spec skeleton analysis.
 
 L1 works with PDD skeleton files that contain spec comments and function
@@ -50,12 +15,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.planner.layers.l2 import _is_relative_to
 
 logger = logging.getLogger(__name__)
-
-_LIBRARIES_PHASE: PhaseId = "libraries"
 
 
 class L1DiscoveryRouter:
@@ -66,9 +28,6 @@ class L1DiscoveryRouter:
         self._fallback_discovery_tool = fallback_discovery_tool
 
     def discover(self, ctx: Any) -> dict[str, Any]:
-        # IMPL(single-layer): This remains the libraries-phase bootstrap discovery path
-        # for iteration 1 (proposal Section 9.1/9.4). Missing slice roots should flow
-        # into under-spec/block handling, never guessed topology.
         slice_root = Path(ctx.slice_root) if ctx.slice_root else None
         if slice_root is None or not slice_root.exists():
             logger.warning("L1 discover: slice_root missing or does not exist (%s)", ctx.slice_root)
@@ -297,7 +256,7 @@ class L1LayerResearchAdapter:
                         question=prompt,
                         context=layer_context,
                         dimension="auto",
-                        layer=_LIBRARIES_PHASE,
+                        layer="l1",
                         slice_id=self._slice_id_from_ctx(ctx),
                         hints={"hint": hint} if hint else {},
                     )
@@ -328,7 +287,7 @@ class L1LayerResearchAdapter:
             return hint
         mode = str(getattr(ctx, "mode", "") or "").strip().lower()
         run_id = str(getattr(ctx, "run_id", "") or "").strip()
-        context_parts = [f"phase={_LIBRARIES_PHASE}"]
+        context_parts = ["layer=l1"]
         if mode:
             context_parts.append(f"mode={mode}")
         if run_id:
@@ -363,24 +322,30 @@ class L1SkeletonPlanner:
         intentions: list[dict[str, Any]] = []
 
         for gap in gaps:
-            if not isinstance(gap, dict):
-                continue
             target = gap.get("target", "")
             matched_node = _match_gap_to_node(target, func_nodes, node_lookup)
-            intentions.append(
-                _build_libraries_intent(
-                    gap=gap,
-                    matched_node=matched_node,
-                    ctx=ctx,
-                )
-            )
+            intention: dict[str, Any] = {
+                "function_name": matched_node.get("name", target) if matched_node else target,
+                "file": matched_node.get("file", "") if matched_node else "",
+                "approach": gap.get("description", gap.get("approach", "")),
+                "spec_comment_ref": matched_node.get("spec_comment_ref", "")
+                if matched_node
+                else "",
+                "dependencies": gap.get("dependencies", []),
+            }
+            intentions.append(intention)
 
         if not gaps and func_nodes:
-            # IMPL(single-layer): Preserve first-pass spec-driven intention bootstrap
-            # when explicit gaps are empty; later iterations should feed queued
-            # libraries work items/shape-scoped gaps through `gaps` (Section 9.2).
             for fn in func_nodes:
-                intentions.append(_build_libraries_intent(gap={}, matched_node=fn, ctx=ctx))
+                intentions.append(
+                    {
+                        "function_name": fn.get("name", ""),
+                        "file": fn.get("file", ""),
+                        "approach": "",
+                        "spec_comment_ref": fn.get("spec_comment_ref", ""),
+                        "dependencies": [],
+                    }
+                )
 
         plan: dict[str, Any] = {"intentions": intentions}
         if self._constraints_store_adapter is None:
@@ -437,11 +402,8 @@ class L1SkeletonPlanner:
             or _coerce_bool(metadata.get("introduces_security_privacy_compliance", False))
             or _coerce_bool(metadata.get("has_security_privacy_compliance_implication", False))
         )
-        # IMPL(single-layer): Session context vocabulary must migrate atomically
-        # (`layer=L1` -> `phase=libraries`) with strategy consumers and persisted
-        # planner artifacts so mixed schemas are never emitted in one run.
         session_ctx: dict[str, Any] = {
-            "phase": _LIBRARIES_PHASE,
+            "layer": "L1",
             "slice_id": getattr(ctx, "slice_id", ""),
             "run_id": getattr(ctx, "run_id", "default"),
             "workspace_root": str(workspace_root),
@@ -497,7 +459,7 @@ class L1SkeletonPlanner:
 
 
 class L1Planner:
-    """Planner implementation for libraries-phase code-as-spec discovery."""
+    """LayerPlanner implementation for the L1 (code-as-spec) layer."""
 
     def __init__(
         self,
@@ -506,11 +468,7 @@ class L1Planner:
         constraints_tool: Any = None,
         constraints_store_adapter: Any = None,
     ) -> None:
-        # IMPL(single-layer): Rename/mount this planner as the libraries-phase planner
-        # while keeping discover/build/under-spec method contracts stable for
-        # `PhaseRouter` dispatch.
-        self.planner_id = "LibrariesPhasePlanner"
-        self.phase: PhaseId = _LIBRARIES_PHASE
+        self.layer: Literal["l1"] = "l1"
         self.layer_research_adapter = L1LayerResearchAdapter(
             research_tool=research_tool,
             constraints_tool=constraints_tool,
@@ -533,7 +491,7 @@ class L1Planner:
         discovery = self.discovery_router.discover(ctx)
         _emit_trace_event(
             self._trace,
-            layer=self.phase,
+            layer=self.layer,
             event="discover",
             payload={
                 "nodes": len(discovery.get("nodes", [])),
@@ -543,9 +501,6 @@ class L1Planner:
         return discovery
 
     def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
-        # IMPL(single-layer): Exported skeleton artifact key should migrate in one
-        # change with planner.api/router (`layer_skeleton` -> `phase_skeleton`);
-        # payload structure stays this graph contract for libraries phase.
         return {
             "code_skeleton_graph": {
                 "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
@@ -562,7 +517,7 @@ class L1Planner:
         plan = self.skeleton_planner.build_plan(ctx, gaps, discovery)
         _emit_trace_event(
             self._trace,
-            layer=self.phase,
+            layer=self.layer,
             event="build_plan",
             payload={
                 "intentions": len(plan.get("intentions", [])),
@@ -580,7 +535,7 @@ class L1Planner:
         result = self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
         _emit_trace_event(
             self._trace,
-            layer=self.phase,
+            layer=self.layer,
             event="resolve_under_spec",
             payload={
                 "blocked": bool(result.get("blocked", False)),
@@ -595,28 +550,14 @@ class L1Planner:
 
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
         """Triage a coordination signal from a halted L1 agent."""
-        # IMPL(single-layer): Keep routing externalized as work items (proposal
-        # Section 8): no code markers, no implicit in-file TODOs, and monitor-driven
-        # wakeup semantics for blocked slices.
         from spec_manager.orchestration.coordination.work_items import (
             SearchQuery,
             WorkItemStore,
         )
 
         need = signal.get("need", {})
-        if not isinstance(need, dict):
-            need = {}
         spec_refs = signal.get("spec_refs", [])
-        if not isinstance(spec_refs, list):
-            spec_refs = []
         search_hints = signal.get("search_hints", {})
-        if not isinstance(search_hints, dict):
-            search_hints = {}
-        signal_shape_id = _resolve_signal_shape_id(
-            signal=signal,
-            need=need,
-            search_hints=search_hints,
-        )
 
         spec_ref_texts = _extract_spec_ref_texts(spec_refs)
         hint_keywords = search_hints.get("keywords", [])
@@ -631,10 +572,8 @@ class L1Planner:
             spec_text="\n".join(spec_ref_texts),
             artifact_key=need.get("artifact_key", ""),
             need_summary=need.get("summary", ""),
-            spec_refs=spec_refs,
+            spec_refs=spec_refs if isinstance(spec_refs, list) else [],
             keywords=keywords,
-            phase=self.phase,
-            shape_id=signal_shape_id or None,
         )
 
         workspace_root = Path(ctx.workspace_root) if ctx.workspace_root else None
@@ -738,69 +677,26 @@ class L1Planner:
                 search_hints=search_hints if isinstance(search_hints, dict) else {},
                 fallback_slice_id=str(getattr(ctx, "slice_id", "") or ""),
             )
-            owner_shape_id = _resolve_routed_shape_id(
-                workspace_root=workspace_root,
-                file_hint=str(spec_match.get("file", "")).strip(),
-                hinted_shape_id=signal_shape_id,
-                fallback_shape_id=owner_slice_id,
-            )
-            new_work_item_payload = _create_work_item_from_spec(
+            new_work_item = _create_work_item_from_spec(
                 spec_match=spec_match,
                 owner_slice_id=owner_slice_id,
-                owner_shape_id=owner_shape_id,
-                run_id=str(getattr(ctx, "run_id", "")).strip(),
-                created_in_phase=self.phase,
-                required_change_type=_normalize_required_change_type(
-                    need.get("required_change_type"),
-                    default="behavior_change",
-                ),
-                signal=signal,
-            )
-            try:
-                new_work_item = _persist_routed_work_item(
-                    store,
-                    new_work_item_payload,
-                    merge_policy="append_evidence",
-                )
-            except ValueError as exc:
-                return {
-                    "action": "BLOCKED",
-                    "monitors": [],
-                    "coverage": "NO_COVERAGE",
-                    "confidence": confidence,
-                    "why": "invalid_routing_work_item",
-                    "missing_detail": str(exc),
-                    "spec_catalog_scan_issues": spec_scan_issues,
-                }
-            new_work_item_dict = new_work_item.to_dict()
-            verifier_refresh_items = _emit_verifier_refresh_work_items_if_needed(
-                store=store,
-                signal=signal,
-                need=need,
-                search_hints=search_hints,
-                run_id=str(getattr(ctx, "run_id", "")).strip(),
-                owner_slice_id=owner_slice_id,
-                shape_id=owner_shape_id,
-                evidence_refs=list(new_work_item.evidence_refs),
-                created_in_phase=self.phase,
-                merge_policy="append_evidence",
             )
             monitor = _build_git_symbol_monitor(
                 signal=signal,
                 need=need,
                 ctx=ctx,
-                work_item_dict=new_work_item_dict,
+                work_item_dict=new_work_item,
             )
             if monitor is None:
                 monitor = _build_work_item_monitor(
                     signal=signal,
-                    work_item_dict=new_work_item_dict,
+                    work_item_dict=new_work_item,
                     ctx=ctx,
                 )
             return {
                 "action": "ROUTE_AND_WAIT",
                 "monitors": [monitor],
-                "routing": [new_work_item_dict, *verifier_refresh_items],
+                "routing": [new_work_item],
                 "coverage": "NO_COVERAGE",
                 "confidence": confidence,
                 "why": why or "spec_found_unrouted",
@@ -809,9 +705,6 @@ class L1Planner:
                 "spec_catalog_scan_issues": spec_scan_issues,
             }
 
-        # IMPL(single-layer): No-coverage catalog outcomes should route to explicit
-        # EXPAND_SPEC work (or remain blocked) rather than guessing implementation
-        # targets, matching Section 8.2 ambiguity handling and Section 9 authority rules.
         expansion = _build_expansion(signal, need, ctx)
         expansion_owner_slice_id = _resolve_owner_slice_id(
             workspace_root=workspace_root,
@@ -820,56 +713,14 @@ class L1Planner:
             search_hints=search_hints if isinstance(search_hints, dict) else {},
             fallback_slice_id=str(getattr(ctx, "slice_id", "") or ""),
         )
-        expansion_shape_id = _resolve_routed_shape_id(
-            workspace_root=workspace_root,
-            file_hint="",
-            hinted_shape_id=signal_shape_id,
-            fallback_shape_id=expansion_owner_slice_id,
-        )
-        expansion_work_item_payload = _create_expansion_work_item(
+        expansion_work_item = _create_expansion_work_item(
             expansion=expansion,
             signal=signal,
             owner_slice_id=expansion_owner_slice_id,
-            owner_shape_id=expansion_shape_id,
-            run_id=str(getattr(ctx, "run_id", "")).strip(),
-            created_in_phase=self.phase,
-            required_change_type=_normalize_required_change_type(
-                need.get("required_change_type"),
-                default="spec_change",
-            ),
-        )
-        try:
-            expansion_work_item = _persist_routed_work_item(
-                store,
-                expansion_work_item_payload,
-                merge_policy="append_evidence",
-            )
-        except ValueError as exc:
-            return {
-                "action": "BLOCKED",
-                "monitors": [],
-                "coverage": "NO_COVERAGE",
-                "confidence": confidence,
-                "why": "invalid_expansion_work_item",
-                "missing_detail": str(exc),
-                "spec_catalog_scan_issues": spec_scan_issues,
-            }
-        expansion_work_item_dict = expansion_work_item.to_dict()
-        verifier_refresh_items = _emit_verifier_refresh_work_items_if_needed(
-            store=store,
-            signal=signal,
-            need=need,
-            search_hints=search_hints,
-            run_id=str(getattr(ctx, "run_id", "")).strip(),
-            owner_slice_id=expansion_owner_slice_id,
-            shape_id=expansion_shape_id,
-            evidence_refs=list(expansion_work_item.evidence_refs),
-            created_in_phase=self.phase,
-            merge_policy="append_evidence",
         )
         monitor = _build_work_item_monitor(
             signal=signal,
-            work_item_dict=expansion_work_item_dict,
+            work_item_dict=expansion_work_item,
             ctx=ctx,
             monitor_kind="spec_expanded",
         )
@@ -884,7 +735,7 @@ class L1Planner:
         return {
             "action": "EXPAND_SPEC",
             "monitors": [monitor],
-            "routing": [expansion_work_item_dict, *verifier_refresh_items],
+            "routing": [expansion_work_item],
             "expansion": expansion,
             "coverage": "NO_COVERAGE",
             "confidence": confidence,
@@ -906,8 +757,6 @@ def _emit_trace_event(
     event: str,
     payload: dict[str, Any],
 ) -> None:
-    # IMPL(single-layer): Trace schema migration (`layer_events`/`layer`) to
-    # phase-native keys must happen atomically with replay/readers in planner.api/router.
     if trace is None or not hasattr(trace, "add_artifact"):
         return
     existing = getattr(trace, "artifacts", {}).get("layer_events", [])
@@ -975,10 +824,7 @@ def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[s
     )
     payload = {
         "task": "l1_discovery",
-        # IMPL(single-layer): Request payload key/value should migrate together with
-        # tool adapters (`layer=l1` -> `phase=libraries`) to keep integration traces
-        # and tool selection deterministic.
-        "phase": _LIBRARIES_PHASE,
+        "layer": "l1",
         "files": file_payload,
         "file_manifest": file_manifest,
     }
@@ -1013,7 +859,7 @@ def _run_l1_discovery_tool(files: dict[str, str], discovery_tool: Any) -> dict[s
                     question=prompt,
                     context=json.dumps(payload, ensure_ascii=True),
                     dimension="auto",
-                    layer=_LIBRARIES_PHASE,
+                    layer="l1",
                     hints={"task": "l1_discovery"},
                     max_results=1,
                 )
@@ -1244,153 +1090,6 @@ def _match_gap_to_node(
     return None
 
 
-def _build_libraries_intent(
-    *,
-    gap: dict[str, Any],
-    matched_node: dict[str, Any] | None,
-    ctx: Any,
-) -> dict[str, Any]:
-    shape_id = _resolve_intent_shape_id(gap=gap, ctx=ctx)
-    file_targets = _collect_gap_file_targets(gap=gap, matched_node=matched_node)
-    function_targets = _collect_gap_function_targets(gap=gap, matched_node=matched_node)
-    required_change_type = _normalize_required_change_type(
-        gap.get("required_change_type"),
-        default="behavior_change",
-    )
-    spec_refs = _collect_gap_spec_refs(gap=gap, matched_node=matched_node)
-    return {
-        "shape_id": shape_id,
-        "file_targets": file_targets,
-        "function_targets": function_targets,
-        "required_change_type": required_change_type,
-        "spec_refs": spec_refs,
-    }
-
-
-def _resolve_intent_shape_id(*, gap: dict[str, Any], ctx: Any) -> str | None:
-    for key in ("shape_id", "owner_shape_id"):
-        value = str(gap.get(key, "")).strip()
-        if value:
-            return value
-    metadata = gap.get("metadata", {})
-    if isinstance(metadata, dict):
-        for key in ("shape_id", "owner_shape_id"):
-            value = str(metadata.get(key, "")).strip()
-            if value:
-                return value
-    context_shape = str(getattr(ctx, "slice_id", "")).strip()
-    return context_shape or None
-
-
-def _collect_gap_file_targets(
-    *,
-    gap: dict[str, Any],
-    matched_node: dict[str, Any] | None,
-) -> list[str]:
-    files: list[str] = []
-    for key in ("file", "target_file", "path", "module_path"):
-        value = str(gap.get(key, "")).strip()
-        if value:
-            files.append(value)
-    for key in ("target_files", "file_targets"):
-        values = gap.get(key)
-        if isinstance(values, list):
-            files.extend(str(v).strip() for v in values if str(v).strip())
-    file_locations = gap.get("file_locations")
-    if isinstance(file_locations, list):
-        for location in file_locations:
-            if not isinstance(location, dict):
-                continue
-            file_path = str(location.get("file_path") or location.get("file") or "").strip()
-            if file_path:
-                files.append(file_path)
-    location = gap.get("location")
-    if isinstance(location, dict):
-        file_path = str(location.get("file") or "").strip()
-        if file_path:
-            files.append(file_path)
-    if matched_node is not None:
-        file_path = str(matched_node.get("file", "")).strip()
-        if file_path:
-            files.append(file_path)
-    return _dedupe_preserve_order(files)
-
-
-def _collect_gap_function_targets(
-    *,
-    gap: dict[str, Any],
-    matched_node: dict[str, Any] | None,
-) -> list[str]:
-    functions: list[str] = []
-    for key in (
-        "function_name",
-        "target",
-        "target_symbol",
-        "symbol",
-        "symbol_fqn",
-        "fqn",
-        "needed_for",
-        "artifact_key",
-    ):
-        value = str(gap.get(key, "")).strip()
-        if value:
-            functions.append(value)
-    for key in ("function_targets", "target_symbols"):
-        values = gap.get(key)
-        if isinstance(values, list):
-            functions.extend(str(v).strip() for v in values if str(v).strip())
-    location = gap.get("location")
-    if isinstance(location, dict):
-        symbol = str(location.get("symbol") or "").strip()
-        if symbol:
-            functions.append(symbol)
-    file_locations = gap.get("file_locations")
-    if isinstance(file_locations, list):
-        for location_item in file_locations:
-            if not isinstance(location_item, dict):
-                continue
-            symbol = str(location_item.get("symbol") or "").strip()
-            if symbol:
-                functions.append(symbol)
-    if matched_node is not None:
-        name = str(matched_node.get("name", "")).strip()
-        if name:
-            functions.append(name)
-    return _dedupe_preserve_order(functions)
-
-
-def _collect_gap_spec_refs(
-    *,
-    gap: dict[str, Any],
-    matched_node: dict[str, Any] | None,
-) -> list[str]:
-    refs: list[str] = []
-    for key in ("spec_comment_ref", "spec_ref"):
-        ref = str(gap.get(key, "")).strip()
-        if ref:
-            refs.append(ref)
-    spec_refs = gap.get("spec_refs")
-    if isinstance(spec_refs, list):
-        for item in spec_refs:
-            if isinstance(item, str):
-                text = item.strip()
-                if text:
-                    refs.append(text)
-                continue
-            if not isinstance(item, dict):
-                continue
-            for key in ("spec_text", "spec_ref", "ref"):
-                text = str(item.get(key, "")).strip()
-                if text:
-                    refs.append(text)
-                    break
-    if matched_node is not None:
-        ref = str(matched_node.get("spec_comment_ref", "")).strip()
-        if ref:
-            refs.append(ref)
-    return _dedupe_preserve_order(refs)
-
-
 # ---------------------------------------------------------------------------
 # Triage helpers
 # ---------------------------------------------------------------------------
@@ -1458,18 +1157,13 @@ def _build_git_symbol_monitor(
     work_item_dict: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build a monitor payload that watches for an artifact symbol to appear."""
-    location: dict[str, Any] = {}
-    item_file_locations = []
-    if isinstance(work_item_dict, dict):
-        raw_locations = work_item_dict.get("file_locations", [])
-        if isinstance(raw_locations, list):
-            item_file_locations = [item for item in raw_locations if isinstance(item, dict)]
-        if item_file_locations:
-            location = item_file_locations[0]
-        elif isinstance(work_item_dict.get("location"), dict):
-            location = work_item_dict["location"]
+    location = (
+        work_item_dict.get("location", {})
+        if isinstance(work_item_dict, dict) and isinstance(work_item_dict.get("location"), dict)
+        else {}
+    )
     item_symbol = str(location.get("symbol", "")).strip()
-    item_file = str(location.get("file_path") or location.get("file") or "").strip()
+    item_file = str(location.get("file", "")).strip()
     artifact_key = str(need.get("artifact_key", "")).strip()
     symbol_fqn = item_symbol or artifact_key
     if not symbol_fqn:
@@ -1514,11 +1208,7 @@ def _build_immediate_wake_instruction(
         or str(metadata.get("source_branch", "")).strip()
         or "upstream/latest"
     )
-    summary = (
-        str(work_item_dict.get("description", "")).strip()
-        or str(work_item_dict.get("title", "")).strip()
-        or str(work_item_dict.get("spec_text", "")).strip()
-    )
+    summary = str(work_item_dict.get("spec_text", "")).strip()
     return {
         "operation": "rebase_or_pull",
         "target_ref": target_ref,
@@ -1530,186 +1220,6 @@ def _build_immediate_wake_instruction(
         "summary": summary,
         "signal_id": signal.get("signal_id", ""),
     }
-
-
-def _normalize_required_change_type(value: Any, *, default: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in {"behavior_change", "wiring_only", "refactor_only", "spec_change"}:
-        return normalized
-    return str(default).strip().lower() or "behavior_change"
-
-
-def _resolve_signal_shape_id(
-    *,
-    signal: dict[str, Any],
-    need: dict[str, Any],
-    search_hints: dict[str, Any],
-) -> str:
-    for source in (signal, need, search_hints):
-        if not isinstance(source, dict):
-            continue
-        for key in ("shape_id", "owner_shape_id"):
-            value = str(source.get(key, "")).strip()
-            if value:
-                return value
-    for source in (signal, need, search_hints):
-        if not isinstance(source, dict):
-            continue
-        metadata = source.get("metadata", {})
-        if not isinstance(metadata, dict):
-            continue
-        for key in ("shape_id", "owner_shape_id"):
-            value = str(metadata.get(key, "")).strip()
-            if value:
-                return value
-    possible_owner_slices = search_hints.get("possible_owner_slices", [])
-    if isinstance(possible_owner_slices, list) and len(possible_owner_slices) == 1:
-        value = str(possible_owner_slices[0]).strip()
-        if value:
-            return value
-    return ""
-
-
-def _resolve_routed_shape_id(
-    *,
-    workspace_root: Path,
-    file_hint: str,
-    hinted_shape_id: str,
-    fallback_shape_id: str,
-) -> str:
-    if hinted_shape_id:
-        return hinted_shape_id
-    file_ref = str(file_hint).strip()
-    if file_ref:
-        try:
-            from spec_manager.routing import load_shape_pack, resolve_shape_for_file
-
-            shape_index = load_shape_pack(workspace_root)
-            resolved_shape = resolve_shape_for_file(file_ref, shape_index)
-            resolved_text = str(resolved_shape or "").strip()
-            if resolved_text:
-                return resolved_text
-        except Exception:
-            logger.debug("L1 triage: unable to resolve shape for %s", file_ref, exc_info=True)
-    return str(fallback_shape_id).strip()
-
-
-def _persist_routed_work_item(
-    store: Any,
-    payload: dict[str, Any],
-    *,
-    merge_policy: Literal["replace", "append_evidence"] = "append_evidence",
-) -> Any:
-    from spec_manager.orchestration.coordination.work_items import WorkItem
-
-    work_item = WorkItem.from_dict(payload)
-    existing = store.get(work_item.work_item_id)
-    if existing is None:
-        return store.create(work_item)
-    return store.upsert(work_item, merge_policy=merge_policy)
-
-
-def _requires_verifier_refresh(
-    *,
-    signal: dict[str, Any],
-    need: dict[str, Any],
-    search_hints: dict[str, Any],
-) -> bool:
-    for source in (signal, need, search_hints):
-        if not isinstance(source, dict):
-            continue
-        if _coerce_bool(source.get("requires_verifier_refresh", False)):
-            return True
-        metadata = source.get("metadata", {})
-        if isinstance(metadata, dict):
-            if _coerce_bool(metadata.get("requires_verifier_refresh", False)):
-                return True
-            shape_status = str(metadata.get("shape_status", "")).strip().upper()
-            if shape_status == "PROPOSAL":
-                return True
-    return False
-
-
-def _extract_signal_verifier_ids(signal: dict[str, Any]) -> list[str]:
-    verifier_ids: list[str] = []
-    candidate_containers: list[Any] = [
-        signal,
-        signal.get("need", {}),
-        signal.get("search_hints", {}),
-    ]
-    for container in candidate_containers:
-        if not isinstance(container, dict):
-            continue
-        for key in ("verifier_ids", "verifiers"):
-            values = container.get(key)
-            if isinstance(values, list):
-                verifier_ids.extend(str(v).strip() for v in values if str(v).strip())
-        metadata = container.get("metadata", {})
-        if isinstance(metadata, dict):
-            for key in ("verifier_ids", "verifiers"):
-                values = metadata.get(key)
-                if isinstance(values, list):
-                    verifier_ids.extend(str(v).strip() for v in values if str(v).strip())
-    return _dedupe_preserve_order(verifier_ids)
-
-
-def _emit_verifier_refresh_work_items_if_needed(
-    *,
-    store: Any,
-    signal: dict[str, Any],
-    need: dict[str, Any],
-    search_hints: dict[str, Any],
-    run_id: str,
-    owner_slice_id: str,
-    shape_id: str,
-    evidence_refs: list[str],
-    created_in_phase: PhaseId,
-    merge_policy: Literal["replace", "append_evidence"] = "append_evidence",
-) -> list[dict[str, Any]]:
-    if not _requires_verifier_refresh(signal=signal, need=need, search_hints=search_hints):
-        return []
-    normalized_shape = str(shape_id).strip()
-    if not normalized_shape:
-        return []
-    verifier_ids = _extract_signal_verifier_ids(signal)
-    seed = (
-        f"verifier_refresh|{run_id}|{owner_slice_id}|{normalized_shape}|"
-        f"{','.join(sorted(verifier_ids))}"
-    )
-    work_item_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-    summary = f"Refresh verifier coverage for shape {normalized_shape}."
-    combined_evidence = _dedupe_preserve_order(
-        [*evidence_refs, *_build_signal_evidence_refs(signal), "requires_verifier_refresh"]
-    )
-    payload = {
-        "work_item_id": work_item_id,
-        "run_id": run_id,
-        "slice_id": owner_slice_id,
-        "title": summary,
-        "description": summary,
-        "shape_id": normalized_shape,
-        "created_in_phase": created_in_phase,
-        "required_change_type": "spec_change",
-        "status": "NEW",
-        "kind": "SPEC_WORK",
-        "priority": "high",
-        "evidence_refs": combined_evidence,
-        "verifier_ids": verifier_ids,
-        "metadata": {
-            "requires_verifier_refresh": True,
-            "source_signal_id": str(signal.get("signal_id", "")).strip(),
-        },
-    }
-    try:
-        persisted = _persist_routed_work_item(store, payload, merge_policy=merge_policy)
-    except ValueError:
-        logger.warning(
-            "Failed to emit verifier refresh work item for shape=%s",
-            normalized_shape,
-            exc_info=True,
-        )
-        return []
-    return [persisted.to_dict()]
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
@@ -2083,69 +1593,33 @@ def _search_spec_catalog(
 def _create_work_item_from_spec(
     spec_match: dict[str, Any],
     owner_slice_id: str,
-    owner_shape_id: str,
-    run_id: str,
-    created_in_phase: PhaseId,
-    required_change_type: str,
-    signal: dict[str, Any],
 ) -> dict[str, Any]:
     """Create a work-item dict from a spec catalog match."""
-    # IMPL(single-layer): Migrate this emitted payload to shared routing contract
-    # fields (`shape_id`, `created_in_phase='libraries'`, `required_change_type`,
-    # `evidence_refs`) and persist via WorkItemStore.create/upsert.
     from spec_manager.orchestration.coordination.work_items import _fingerprint
 
     spec_text = str(spec_match.get("spec_text", "")).strip()
     file_path = str(spec_match.get("file", "")).strip()
     symbol = str(spec_match.get("symbol", "")).strip()
-    try:
-        line_hint = int(spec_match.get("line_hint", 0) or 0)
-    except (TypeError, ValueError):
-        line_hint = 0
-    line_start = line_hint if line_hint > 0 else None
+    line_hint = int(spec_match.get("line_hint", 0) or 0)
     spec_fingerprint = _fingerprint(spec_text) if spec_text else ""
-    normalized_change_type = _normalize_required_change_type(
-        required_change_type,
-        default="behavior_change",
-    )
-    identity_seed = (
-        f"{created_in_phase}|{normalized_change_type}|{owner_shape_id}|"
-        f"{spec_fingerprint}|{file_path}|{symbol}|{line_hint}"
-    )
+    identity_seed = f"{spec_fingerprint}|{file_path}|{symbol}|{line_hint}"
     work_item_id = hashlib.sha256(identity_seed.encode("utf-8")).hexdigest()[:16]
-    evidence_refs = _build_spec_match_evidence_refs(spec_match, signal=signal)
-    title = spec_text or f"Implement shape behavior for {owner_shape_id}."
 
     return {
         "work_item_id": work_item_id,
-        "run_id": run_id,
-        "slice_id": owner_slice_id,
-        "title": title,
-        "description": title,
-        "shape_id": owner_shape_id,
-        "created_in_phase": created_in_phase,
-        "required_change_type": normalized_change_type,
+        "spec_text": spec_text,
+        "file": file_path,
+        "owner_slice_id": owner_slice_id,
         "status": "NEW",
-        "priority": "normal",
-        "file_locations": (
-            [
-                {
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "line_end": line_start,
-                    "symbol": symbol or None,
-                }
-            ]
-            if file_path or symbol
-            else []
-        ),
+        "location": {
+            "file": file_path,
+            "symbol": symbol,
+            "line_hint": line_hint,
+        },
         "kind": "SPEC_WORK",
-        "evidence_refs": evidence_refs,
-        "verifier_ids": _extract_signal_verifier_ids(signal),
         "metadata": {
             "spec_fingerprint": spec_fingerprint,
             "matched_in": spec_match.get("matched_in", ""),
-            "candidate_matches": spec_match.get("candidate_matches", []),
         },
     }
 
@@ -2154,15 +1628,8 @@ def _create_expansion_work_item(
     expansion: dict[str, Any],
     signal: dict[str, Any],
     owner_slice_id: str,
-    owner_shape_id: str,
-    run_id: str,
-    created_in_phase: PhaseId,
-    required_change_type: str,
 ) -> dict[str, Any]:
     """Create a routed expansion work item for underspecified needs."""
-    # IMPL(single-layer): Expansion/spec-change work items should be able to carry
-    # `requires_verifier_refresh=True` + verifier identifiers when shape/spec
-    # contracts change (evaluation modification #3).
     from spec_manager.orchestration.coordination.work_items import _fingerprint
 
     expansion_id = str(expansion.get("expansion_id", "")).strip()
@@ -2185,43 +1652,18 @@ def _create_expansion_work_item(
         line_hint = int(line_hint_raw or 0)
     except (TypeError, ValueError):
         line_hint = 0
-    line_start = line_hint if line_hint > 0 else None
-    normalized_change_type = _normalize_required_change_type(
-        required_change_type,
-        default="spec_change",
-    )
-    evidence_refs = _build_signal_evidence_refs(signal)
-    if artifact_key:
-        evidence_refs = _dedupe_preserve_order(
-            [*evidence_refs, f"artifact:{artifact_key}"]
-        )
 
     return {
         "work_item_id": work_item_id,
-        "run_id": run_id,
-        "slice_id": owner_slice_id,
-        "title": spec_text,
-        "description": spec_text,
-        "shape_id": owner_shape_id,
-        "created_in_phase": created_in_phase,
-        "required_change_type": normalized_change_type,
+        "spec_text": spec_text,
+        "owner_slice_id": owner_slice_id,
         "status": "NEW",
-        "priority": "high",
-        "file_locations": (
-            [
-                {
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "line_end": line_start,
-                    "symbol": symbol or None,
-                }
-            ]
-            if file_path or symbol
-            else []
-        ),
-        "kind": "SPEC_WORK",
-        "evidence_refs": evidence_refs,
-        "verifier_ids": _extract_signal_verifier_ids(signal),
+        "location": {
+            "file": file_path,
+            "symbol": symbol,
+            "line_hint": line_hint,
+        },
+        "kind": "EXPANSION",
         "metadata": {
             "spec_fingerprint": spec_fingerprint,
             "expansion_id": expansion_id,
@@ -2231,54 +1673,6 @@ def _create_expansion_work_item(
             "signal_id": str(signal.get("signal_id", "")).strip(),
         },
     }
-
-
-def _build_signal_evidence_refs(signal: dict[str, Any]) -> list[str]:
-    refs: list[str] = []
-    signal_id = str(signal.get("signal_id", "")).strip()
-    if signal_id:
-        refs.append(f"signal:{signal_id}")
-    spec_refs = signal.get("spec_refs", [])
-    if isinstance(spec_refs, list):
-        for ref in spec_refs:
-            if not isinstance(ref, dict):
-                continue
-            source_file = str(ref.get("source_file", "")).strip()
-            source_symbol = str(ref.get("source_symbol", "")).strip()
-            source_line = ref.get("source_line_hint", 0)
-            try:
-                line_hint = int(source_line or 0)
-            except (TypeError, ValueError):
-                line_hint = 0
-            if source_file and line_hint > 0:
-                refs.append(f"{source_file}:{line_hint}")
-            elif source_file:
-                refs.append(source_file)
-            if source_symbol:
-                refs.append(f"symbol:{source_symbol}")
-    return _dedupe_preserve_order(refs)
-
-
-def _build_spec_match_evidence_refs(
-    spec_match: dict[str, Any],
-    *,
-    signal: dict[str, Any],
-) -> list[str]:
-    refs = _build_signal_evidence_refs(signal)
-    file_path = str(spec_match.get("file", "")).strip()
-    line_hint_raw = spec_match.get("line_hint", 0)
-    try:
-        line_hint = int(line_hint_raw or 0)
-    except (TypeError, ValueError):
-        line_hint = 0
-    matched_in = str(spec_match.get("matched_in", "")).strip()
-    if file_path and line_hint > 0:
-        refs.append(f"{file_path}:{line_hint}")
-    elif file_path:
-        refs.append(file_path)
-    if matched_in:
-        refs.append(f"matched_in:{matched_in}")
-    return _dedupe_preserve_order(refs)
 
 
 _L1_EXTERNAL_DEP_KEYWORDS = (

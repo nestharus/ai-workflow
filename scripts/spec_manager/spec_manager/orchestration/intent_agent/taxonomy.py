@@ -94,12 +94,6 @@ class ConstraintDimension(str, enum.Enum):
     DATA = "data"  # sensitivity, retention, volume, lineage, access
 
 
-# TODO [R2-5.4.2]: Reframe mapping — for each prohibited type, define the
-#   pattern for reframing into a valid type:
-#   ARCHITECTURE → CONSTRAINT/TRADEOFF (required behavior/timing/visibility)
-#   IMPLEMENTATION → CONSTRAINT/SCOPE (compatibility/lock-in/licensing)
-#   DESIGN_PATTERN → CONSTRAINT/SCOPE (change frequency/ownership/audit)
-#   OPTIMIZATION → CONSTRAINT/TRADEOFF (performance targets/acceptable delays)
 REFRAME_TARGET_MAP: dict[QuestionTaxonomy, list[QuestionTaxonomy]] = {
     QuestionTaxonomy.ARCHITECTURE: [QuestionTaxonomy.CONSTRAINT, QuestionTaxonomy.TRADEOFF],
     QuestionTaxonomy.IMPLEMENTATION: [QuestionTaxonomy.CONSTRAINT, QuestionTaxonomy.SCOPE],

@@ -1,57 +1,3 @@
-# TODO(single-layer): RESTRUCTURE — Router converts failures to work items (not
-#   DemotionTickets targeting layers). Remove _normalize_layer, _GATE_FINDING_PIN_KEYS.
-#   Add shape_id resolution: map failing file -> owning shape (Section 8.2 step 1).
-#   The evidence extraction logic (gate findings, test failures) survives.
-#   No cross-phase routing: router routes within current phase or blocks.
-#   3 phases (libraries, architecture, quality), forward-only, no cycling back.
-# IMPL(single-layer): Ownership mapping should call
-# `routing.shapes.resolve_shape_for_file` (most-specific package prefix) rather than
-# maintaining a router-local prefix matcher.
-# IMPL(single-layer): If ownership resolves to a PROPOSAL shape or metadata requests
-# verifier refresh, emit verifier/spec work items for the current phase instead of
-# treating the finding as converged.
-# IMPL(single-layer): Keep this file aligned with `orchestration.demotion`
-# ticket-contract migration (EscalationTicket fields + QUEUED/BLOCKED outcomes);
-# router must not carry duplicate layer-era defaults once the shared schema changes.
-# IMPL(single-layer): Consume triage as action authority (`queue_work_item`,
-# `fix_in_phase`, `block`) and stop deriving synthetic target phases/layers in router code.
-# IMPL(single-layer): Canonicalize gate IDs before triage so Section 10.2 gate
-# collapse (`TESTS_PASS` -> `ALL_TESTS_PASS`) and retired-gate blocking are visible in
-# `blocked_findings` diagnostics.
-# IMPL(single-layer): Keep `route_review_findings` input schema synchronized with
-# `orchestration.review.findings_to_tickets.ReviewFinding.to_router_finding` so
-# finding-index diagnostics and authority triage fields are preserved end-to-end.
-# ALGORITHM(single-layer):
-#   References: response3 Sections 8.2 and 11.
-#   Data structures:
-#     - PhaseId = Literal['libraries', 'architecture', 'quality'] (3 forward-only phases).
-#     - RoutingBatch: {created_work_items: list[WorkItem], blocked_findings: list[dict[str, Any]], diagnostics: list[str]}.
-#     - GateFindingProjection keeps file/evidence extraction but replaces pin fields with shape owner fields.
-#   Interface contracts:
-#     - class DemotionRouter:
-#       - def route_gate_failures(..., shape_index: ShapePackIndex) -> RoutingBatch
-#       - def route_test_failures(..., shape_index: ShapePackIndex) -> RoutingBatch
-#       - def route_review_findings(..., shape_index: ShapePackIndex) -> RoutingBatch
-#   Control flow:
-#     1. Parse failure payloads and normalize deterministic fields.
-#     2. Resolve owning shape from failing file path using routing.shapes ownership.
-#     3. Build EscalationContext and call triage() for phase-local routing decision.
-#     4. If within current phase authority: materialize WorkItem with shape_id, required_change_type, evidence refs.
-#     5. If outside current phase authority: block (no demotion to earlier phase).
-#        Architecture can remediate algorithm issues in-place; Quality blocks on behavior change.
-#     6. Aggregate blocked cases when owner shape cannot be resolved.
-#   Error handling:
-#     - Invalid failure payload type logs warning and creates blocked diagnostic entry.
-#     - No cross-phase re-routing; out-of-authority findings block with diagnostics.
-#   Integration points:
-#     - Called by promotion loop VERIFY/PROMOTE failures and review finding conversion.
-#     - Calls demotion.triage and coordination.work_items store.
-#   Test requirements:
-#     - File-to-shape routing works for nested package ownership.
-#     - Gate/test/review payloads all convert to work items within current phase.
-#     - Out-of-authority findings produce block, not cross-phase routing.
-#     - Missing ownership produces block entry, not silent drop.
-
 """Demotion router: converts failure evidence into DemotionTickets.
 
 Consumes gate violations, test failures, and review findings, and
@@ -61,69 +7,36 @@ produces routed DemotionTickets targeting the correct layer.
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
-from spec_manager.compliance.promotion.config import PhaseId
-from spec_manager.orchestration.coordination.work_items import (
-    RequiredChangeType,
-    WorkItem,
-    WorkItemLocation,
-)
+from spec_manager.orchestration.demotion import DemotionTicket
 from spec_manager.orchestration.demotion.triage import (
     DemotionContext,
     DemotionRouting,
     infer_gate_source_layer,
     triage,
 )
-from spec_manager.routing.shapes import ShapeId, ShapePackIndex, resolve_shape_for_file
 
 logger = logging.getLogger(__name__)
-
-_SOURCE_PHASE_KEYS = ("source_phase", "failure_phase", "phase", "active_phase", "source_layer", "failure_layer", "layer", "origin_layer")
+_SOURCE_LAYER_KEYS = ("source_layer", "failure_layer", "layer", "origin_layer")
 _GATE_FINDING_FILE_KEYS = ("file_path", "arch_file")
+_GATE_FINDING_PIN_KEYS = ("pin_func_id", "matching_pin_func_id")
 _GATE_FINDING_EVIDENCE_KEYS = ("raw_excerpt_path", "evidence_path", "excerpt_path")
-_GATE_FINDING_REQUIRED_CHANGE_KEYS = ("required_change_type", "change_type")
-
-_ALLOWED_PHASES = ("libraries", "architecture", "quality")
-_PHASE_TO_LAYER = {
-    "libraries": "L1",
-    "architecture": "L2",
-    "quality": "L3",
-}
-_LAYER_TO_PHASE = {v: k for k, v in _PHASE_TO_LAYER.items()}
-_ALLOWED_CHANGE_TYPES = {
-    "behavior_change",
-    "wiring_only",
-    "refactor_only",
-    "spec_change",
-}
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
-
-
-def _normalize_text(value: Any) -> str | None:
-    text = str(value or "").strip()
-    if text:
-        return text
+def _normalize_layer(layer: Any) -> str | None:
+    normalized = str(layer or "").strip().upper()
+    if normalized in {"L1", "L2", "L3"}:
+        return normalized
     return None
 
 
-def _unique_ordered(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for value in values:
-        if not value:
-            continue
-        if value in seen:
-            continue
-        seen.add(value)
-        out.append(value)
-    return out
+def _normalize_text(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    if normalized:
+        return normalized
+    return None
 
 
 def _normalize_text_list(values: Any) -> list[str]:
@@ -152,130 +65,17 @@ def _first_nonempty(mapping: dict[str, Any], keys: tuple[str, ...]) -> str | Non
     return None
 
 
-def _normalize_required_change_type(value: Any) -> RequiredChangeType | None:
-    normalized = _normalize_text(value)
-    if not normalized:
-        return None
-    normalized = normalized.replace("-", "_").strip().lower()
-    if normalized not in _ALLOWED_CHANGE_TYPES:
-        return None
-    return cast("RequiredChangeType", normalized)
-
-
-def _normalize_phase(value: Any, *, fallback: PhaseId) -> PhaseId:
-    normalized = _normalize_text(value)
-    if normalized is None:
-        return fallback
-
-    lowered = normalized.lower()
-    if lowered in _ALLOWED_PHASES:
-        return cast("PhaseId", lowered)
-
-    upper = normalized.upper()
-    if upper in _LAYER_TO_PHASE:
-        return cast("PhaseId", _LAYER_TO_PHASE[upper])
-
-    return fallback
-
-
-def _infer_source_phase(
-    payload: dict[str, Any],
-    *,
-    fallback: PhaseId,
-    gate_id: str | None = None,
-) -> tuple[PhaseId, str | None]:
-    discovered: list[PhaseId] = []
-    issues: list[str] = []
-    for key in _SOURCE_PHASE_KEYS:
-        raw_value = payload.get(key)
-        if raw_value is None:
-            continue
-        normalized_phase = _normalize_phase(raw_value, fallback="")
-        if normalized_phase:
-            discovered.append(normalized_phase)
-            continue
-        normalized_layer = _normalize_text(raw_value)
-        if normalized_layer:
-            issues.append(f"unrecognized_phase[{key}]={normalized_layer}")
-
-    if not discovered and gate_id:
-        gate_layer = infer_gate_source_layer(gate_id)
-        if gate_layer:
-            discovered.append(_LAYER_TO_PHASE[gate_layer])
-
-    unique_discovered = list(dict.fromkeys(discovered))
-    if not unique_discovered:
-        issue = None
-        if issues:
-            issue = "; ".join(issues)
-            logger.warning("Source phase unresolved for payload: %s", issue)
-        return fallback, issue
-
-    issue = None
-    if len(unique_discovered) > 1:
-        issue = f"conflicting source phases: {', '.join(unique_discovered)}"
-        logger.warning("Source phase conflict for payload: %s", issue)
-    return unique_discovered[0], issue
-
-
-def _resolve_shape_for_file_with_diagnostics(
-    file_path: str,
-    shape_index: ShapePackIndex,
-) -> tuple[ShapeId | None, list[str]]:
-    normalized = _normalize_text(file_path)
-    if not normalized:
-        return None, ["missing file path"]
-
-    try:
-        shape_id = resolve_shape_for_file(normalized, shape_index)
-    except Exception as exc:  # pragma: no cover - defensive for legacy resolver exceptions
-        return None, [f"shape resolution failed: {type(exc).__name__}:{exc}"]
-
-    if not shape_id:
-        return None, ["shape owner not found"]
-    return shape_id, []
-
-
-def _group_files_by_shape(
-    file_paths: list[str],
-    shape_index: ShapePackIndex,
-) -> tuple[dict[ShapeId, list[str]], list[tuple[str, list[str]]]]:
-    grouped: dict[ShapeId, list[str]] = {}
-    unresolved: list[tuple[str, list[str]]] = []
-
-    for file_path in file_paths:
-        shape_id, diagnostics = _resolve_shape_for_file_with_diagnostics(
-            file_path,
-            shape_index,
-        )
-        if shape_id is None:
-            unresolved.append((file_path, diagnostics))
-            continue
-        grouped.setdefault(shape_id, []).append(file_path)
-
-    for files in grouped.values():
-        # Preserve deterministic ordering for downstream consumers.
-        ordered_files = list(dict.fromkeys(files))
-        files[:] = ordered_files
-
-    return grouped, unresolved
-
-
 @dataclass
-class SourcePhaseResolution:
-    phase: PhaseId
+class SourceLayerResolution:
+    layer: str | None
     issue: str | None = None
 
 
 @dataclass
 class GateFindingProjection:
-    # IMPL(single-layer): Replace pin-centric routing fields with shape routing
-    # fields (`shape_id`, optional `required_change_type` hint). Pin IDs can
-    # survive only as non-authoritative intra-shape targeting hints.
     finding_index: int
     file_path: str | None = None
     pin_func_id: str | None = None
-    required_change_type: str | None = None
     evidence_path: str | None = None
 
     def evidence_ref(self, gate_id: str) -> str:
@@ -283,35 +83,14 @@ class GateFindingProjection:
         return f"gate_finding:{gate_ref}:{self.finding_index}"
 
 
-def _project_gate_findings(
-    gate_id: str,
-    findings: Any,
-) -> list[GateFindingProjection]:
+def _project_gate_findings(gate_id: str, findings: Any) -> list[GateFindingProjection]:
     if not isinstance(findings, list):
         logger.warning(
-            "Gate '%s' findings payload is %s, expected list; defaulting to file-level finding",
+            "Gate '%s' findings payload is %s, expected list; ignoring payload",
             gate_id,
             type(findings).__name__,
         )
-        if isinstance(findings, dict):
-            file_path = _first_nonempty(findings, _GATE_FINDING_FILE_KEYS)
-            required_change_type = _first_nonempty(
-                findings,
-                _GATE_FINDING_REQUIRED_CHANGE_KEYS,
-            )
-            evidence_path = _first_nonempty(findings, _GATE_FINDING_EVIDENCE_KEYS)
-        else:
-            file_path = None
-            required_change_type = None
-            evidence_path = None
-        return [
-            GateFindingProjection(
-                finding_index=0,
-                file_path=file_path,
-                required_change_type=required_change_type,
-                evidence_path=evidence_path,
-            )
-        ]
+        return []
 
     projected: list[GateFindingProjection] = []
     for idx, finding in enumerate(findings):
@@ -329,443 +108,273 @@ def _project_gate_findings(
             GateFindingProjection(
                 finding_index=idx,
                 file_path=_first_nonempty(finding, _GATE_FINDING_FILE_KEYS),
-                pin_func_id=_first_nonempty(
-                    finding,
-                    ("pin_func_id", "matching_pin_func_id"),
-                ),
-                required_change_type=_first_nonempty(
-                    finding,
-                    _GATE_FINDING_REQUIRED_CHANGE_KEYS,
-                ),
+                pin_func_id=_first_nonempty(finding, _GATE_FINDING_PIN_KEYS),
                 evidence_path=_first_nonempty(finding, _GATE_FINDING_EVIDENCE_KEYS),
             )
         )
     return projected
 
 
-def _resolve_required_change_type(
-    explicit_change_type: str | None,
-    routing: DemotionRouting,
-) -> RequiredChangeType:
-    explicit = _normalize_required_change_type(explicit_change_type)
-    if explicit:
-        return explicit
-
-    if routing.action == "fix_in_layer":
-        return "refactor_only"
-
-    if routing.target_layer == "L2":
-        return "wiring_only"
-    if routing.target_layer == "L3":
-        return "refactor_only"
-    return "behavior_change"
+def _active_layer_or_default(*layers: str | None) -> str:
+    for layer in layers:
+        normalized = _normalize_layer(layer)
+        if normalized:
+            return normalized
+    return "L1"
 
 
-def _authority_allows(
-    active_phase: PhaseId,
-    required_change_type: RequiredChangeType,
-    routing: DemotionRouting,
-) -> tuple[bool, str]:
-    if routing.action == "block":
-        return False, "triage_blocked"
+def _build_blocked_ticket(
+    *,
+    run_id: str,
+    source: str,
+    category: str,
+    gate: str | None,
+    active_layer: str,
+    diagnosis: str,
+    failing_files: list[str] | None = None,
+    failing_pins: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+    diagnostics: list[str] | None = None,
+) -> tuple[DemotionTicket, DemotionRouting]:
+    layer = _active_layer_or_default(active_layer)
+    normalized_source = _normalize_text(source) or "ALGORITHMIC_GATE"
+    ticket = DemotionTicket(
+        run_id=run_id,
+        source=normalized_source,
+        category=category or "",
+        gate=gate,
+        target_layer=layer,
+        severity="BLOCKER",
+        origin_layer=layer,
+        hop_trace=[layer, layer],
+        failing_pins=list(failing_pins or []),
+        failing_files=list(failing_files or []),
+        diagnosis=diagnosis,
+        evidence_refs=list(evidence_refs or []),
+    )
+    ticket.questions.extend(list(diagnostics or []))
+    routing = DemotionRouting(
+        target_layer=layer,
+        action="block",
+        reason=diagnosis,
+        confidence=1.0,
+        diagnostics=list(diagnostics or []),
+    )
+    return ticket, routing
 
-    if active_phase == "libraries":
-        return True, "queue_work_item"
 
-    if active_phase == "architecture":
-        if required_change_type == "refactor_only":
-            return False, "architecture_refactor_out_of_authority"
-        return True, "queue_work_item"
+def _infer_source_layer(
+    evidence: dict[str, Any],
+    *,
+    fallback: str,
+    gate_id: str | None = None,
+) -> SourceLayerResolution:
+    evidence_layers: list[tuple[str, str]] = []
+    for key in _SOURCE_LAYER_KEYS:
+        normalized = _normalize_layer(evidence.get(key))
+        if normalized:
+            evidence_layers.append((key, normalized))
 
-    if active_phase == "quality":
-        if required_change_type == "refactor_only":
-            return True, "queue_work_item"
-        return False, "quality_restricts_blocking"
+    inferred_gate_layer = infer_gate_source_layer(gate_id)
+    evidence_layer = evidence_layers[0][1] if evidence_layers else None
+    distinct_evidence_layers = {layer for _, layer in evidence_layers}
+    issue: str | None = None
 
-    return False, "unknown_active_phase"
+    if len(distinct_evidence_layers) > 1:
+        issue = "Conflicting source-layer fields in evidence: " + ", ".join(
+            f"{key}={layer}" for key, layer in evidence_layers
+        )
+    if inferred_gate_layer and evidence_layer and inferred_gate_layer != evidence_layer:
+        mismatch = (
+            f"Gate '{gate_id}' infers source layer {inferred_gate_layer}, "
+            f"but evidence fields indicate {evidence_layer}"
+        )
+        issue = f"{issue}; {mismatch}" if issue else mismatch
+
+    if inferred_gate_layer:
+        return SourceLayerResolution(layer=inferred_gate_layer, issue=issue)
+    if evidence_layer:
+        return SourceLayerResolution(layer=evidence_layer, issue=issue)
+
+    normalized_fallback = _normalize_layer(fallback)
+    if normalized_fallback:
+        return SourceLayerResolution(layer=normalized_fallback, issue=issue)
+    unresolved = issue or "Could not infer source layer from gate, evidence, or fallback"
+    return SourceLayerResolution(layer=None, issue=unresolved)
+
+
+def _gate_source_for_layer(layer: str) -> str:
+    normalized = _normalize_layer(layer) or "L1"
+    return "ALGORITHMIC_GATE" if normalized == "L1" else "ARCH_GATE"
 
 
 @dataclass
 class RoutingBatch:
     """Result of routing a batch of failures."""
 
-    # IMPL(single-layer): Replace ticket/routing outputs with
-    # `created_work_items`, `blocked_findings`, and `diagnostics` so the router
-    # emits phase-local work (Section 8.2) instead of demotion tickets.
-    created_work_items: list[WorkItem] = field(default_factory=list)
-    blocked_findings: list[dict[str, Any]] = field(default_factory=list)
-    diagnostics: list[str] = field(default_factory=list)
+    tickets: list[DemotionTicket] = field(default_factory=list)
+    routings: list[DemotionRouting] = field(default_factory=list)
 
 
 class DemotionRouter:
-    """Routes failure evidence into work items and blocked findings."""
+    """Routes failure evidence into DemotionTickets.
+
+    Wraps the triage classifier and extends DemotionTicket with
+    origin_layer and hop_trace for multi-layer traceability.
+
+    Args:
+        run_id: Current run identifier.
+        active_layer: Currently active promotion layer.
+    """
 
     def __init__(
         self,
         run_id: str = "",
-        active_layer: str = "libraries",
+        active_layer: str = "L1",
     ) -> None:
         self._run_id = run_id
-        self._active_phase = _normalize_phase(active_layer, fallback="libraries")
-        self._active_layer = _PHASE_TO_LAYER[self._active_phase]
+        normalized_active = _normalize_layer(active_layer)
+        if not normalized_active:
+            logger.warning(
+                "DemotionRouter active_layer '%s' is invalid; defaulting to L1",
+                active_layer,
+            )
+            normalized_active = "L1"
+        self._active_layer = normalized_active
 
-    def _build_blocked_finding(
-        self,
-        *,
-        source: str,
-        source_id: str | None,
-        slice_id: str,
-        finding_index: int | None,
-        phase: PhaseId,
-        failing_files: list[str],
-        failing_pins: list[str],
-        evidence_refs: list[str],
-        reason: str,
-        diagnostics: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "source": source,
-            "source_id": source_id,
-            "slice_id": slice_id,
-            "finding_index": finding_index,
-            "phase": phase,
-            "failing_files": failing_files,
-            "failing_pins": failing_pins,
-            "evidence_refs": evidence_refs,
-            "reason": reason,
-            "diagnostics": diagnostics or [],
-        }
+    def route(self, ctx: DemotionContext) -> tuple[DemotionTicket, DemotionRouting]:
+        """Triage a single failure and produce a DemotionTicket.
 
-    def _append_blocked(
-        self,
-        batch: RoutingBatch,
-        *,
-        source: str,
-        source_id: str | None,
-        slice_id: str,
-        finding_index: int,
-        phase: PhaseId,
-        failing_files: list[str],
-        failing_pins: list[str],
-        evidence_refs: list[str],
-        reason: str,
-        diagnostics: list[str] | None = None,
-    ) -> None:
-        blocked = self._build_blocked_finding(
-            source=source,
-            source_id=source_id,
-            slice_id=slice_id,
-            finding_index=finding_index,
-            phase=phase,
-            failing_files=failing_files,
-            failing_pins=failing_pins,
-            evidence_refs=evidence_refs,
-            reason=reason,
-            diagnostics=diagnostics,
+        Args:
+            ctx: Failure context with evidence.
+
+        Returns:
+            (DemotionTicket, DemotionRouting) pair.
+        """
+        routing = triage(ctx)
+
+        ticket_severity = (
+            "BLOCKER" if (routing.action == "block" or routing.confidence >= 0.8) else "MAJOR"
         )
-        batch.blocked_findings.append(blocked)
-        batch.diagnostics.append(f"{source}:{reason}")
-
-    def _build_work_item(
-        self,
-        *,
-        source: str,
-        source_id: str | None,
-        slice_id: str,
-        finding_index: int,
-        phase: PhaseId,
-        title: str,
-        description: str,
-        shape_id: ShapeId,
-        required_change_type: RequiredChangeType,
-        routing: DemotionRouting,
-        files: list[str],
-        evidence_refs: list[str],
-        failing_pins: list[str],
-        required_shape_metadata: dict[str, Any],
-    ) -> WorkItem:
-        now = _utc_now()
-        file_locations = [WorkItemLocation(file_path=file_path) for file_path in files]
-        return WorkItem(
-            work_item_id=f"demotion:{uuid.uuid4().hex[:12]}",
+        origin_layer = _active_layer_or_default(
+            ctx.source_layer, ctx.active_layer, self._active_layer
+        )
+        ticket = DemotionTicket(
             run_id=self._run_id,
-            slice_id=slice_id,
-            title=title[:140],
-            description=description,
-            shape_id=shape_id,
-            created_in_phase=phase,
-            required_change_type=required_change_type,
-            status="NEW",
-            kind="SPEC_WORK",
-            priority="normal",
-            file_locations=file_locations,
-            evidence_refs=evidence_refs,
-            contract_ids=[],
-            verifier_ids=[],
-            created_at=now,
-            updated_at=now,
-            metadata={
-                "created_phase": phase,
-                "source": source,
-                "source_id": source_id,
-                "finding_index": finding_index,
-                "triage_reason": routing.reason,
-                "triage_action": routing.action,
-                "triage_confidence": routing.confidence,
-                "triage_diagnostics": routing.diagnostics,
-                "required_change_type": required_change_type,
-                "failing_pins": failing_pins,
-                **required_shape_metadata,
-            },
+            source=ctx.source or "ALGORITHMIC_GATE",
+            category=ctx.category or "",
+            gate=ctx.gate,
+            target_layer=routing.target_layer,
+            severity=ticket_severity,
+            origin_layer=origin_layer,
+            hop_trace=[origin_layer, routing.target_layer],
+            failing_pins=list(ctx.failing_pins),
+            failing_files=list(ctx.failing_files),
+            diagnosis=routing.reason,
+            evidence_refs=list(ctx.evidence_paths),
         )
+        if routing.diagnostics:
+            ticket.questions.extend(routing.diagnostics)
 
-    def _route_to_items(
-        self,
-        batch: RoutingBatch,
-        *,
-        source: str,
-        source_id: str | None,
-        source_phase: PhaseId,
-        slice_id: str,
-        finding_index: int,
-        finding_description: str,
-        category: str,
-        dimension: str,
-        tags: list[str],
-        explicit_change_type: str | None,
-        file_paths: list[str],
-        evidence_paths: list[str],
-        shape_index: ShapePackIndex,
-        failing_pins: list[str],
-    ) -> None:
-        if not file_paths:
-            reason = "no failing files available for shape routing"
-            self._append_blocked(
-                batch,
-                source=source,
-                source_id=source_id,
-                slice_id=slice_id,
-                finding_index=finding_index,
-                phase=self._active_phase,
-                failing_files=[],
-                failing_pins=failing_pins,
-                evidence_refs=evidence_paths,
-                reason=reason,
-                diagnostics=["missing_file_path"],
-            )
-            return
-
-        grouped, unresolved = _group_files_by_shape(file_paths, shape_index)
-        for file_path, diag in unresolved:
-            self._append_blocked(
-                batch,
-                source=source,
-                source_id=source_id,
-                slice_id=slice_id,
-                finding_index=finding_index,
-                phase=self._active_phase,
-                failing_files=[file_path],
-                failing_pins=failing_pins,
-                evidence_refs=evidence_paths,
-                reason="ownership could not be resolved for failing file",
-                diagnostics=diag,
-            )
-
-        if not grouped:
-            return
-
-        for shape_id, shape_files in grouped.items():
-            shape = shape_index.shapes.get(shape_id)
-            shape_status = ""
-            requires_verifier_refresh = False
-            if shape is not None:
-                shape_status = str(shape.status)
-                requires_verifier_refresh = bool(shape.requires_verifier_refresh)
-
-            context = DemotionContext(
-                active_layer=self._active_layer,
-                source_layer=_PHASE_TO_LAYER[source_phase],
-                source=source,
-                gate=source_id,
-                category=category,
-                dimension=dimension,
-                tags=tags,
-                required_change_type=explicit_change_type or "",
-                failing_files=shape_files,
-                failing_pins=failing_pins,
-                evidence_paths=evidence_paths,
-            )
-            routing = triage(context)
-            required_change_type = _resolve_required_change_type(
-                explicit_change_type,
-                routing,
-            )
-
-            if shape_status == "PROPOSAL" or requires_verifier_refresh:
-                required_change_type = "spec_change"
-
-            allowed, outcome = _authority_allows(
-                self._active_phase,
-                required_change_type,
-                routing,
-            )
-            if not allowed:
-                self._append_blocked(
-                    batch,
-                    source=source,
-                    source_id=source_id,
-                    slice_id=slice_id,
-                    finding_index=finding_index,
-                    phase=self._active_phase,
-                    failing_files=shape_files,
-                    failing_pins=failing_pins,
-                    evidence_refs=evidence_paths,
-                    reason=outcome,
-                    diagnostics=([f"triage={routing.reason}"] + routing.diagnostics),
-                )
-                continue
-
-            item_title = (
-                f"[{source}] {source_id or 'finding'} for shape {shape_id}"
-            )
-            item_description = (
-                f"{finding_description} routing_outcome={outcome} "
-                f"triage_reason={routing.reason} triage_confidence={routing.confidence}"
-            )
-            work_item = self._build_work_item(
-                source=source,
-                source_id=source_id,
-                slice_id=slice_id,
-                finding_index=finding_index,
-                phase=self._active_phase,
-                title=item_title,
-                description=item_description,
-                shape_id=shape_id,
-                required_change_type=required_change_type,
-                routing=routing,
-                files=shape_files,
-                evidence_refs=evidence_paths,
-                failing_pins=failing_pins,
-                required_shape_metadata={
-                    "shape_status": shape_status,
-                    "shape_requires_verifier_refresh": requires_verifier_refresh,
-                    "source_phase": source_phase,
-                },
-            )
-            batch.created_work_items.append(work_item)
+        return ticket, routing
 
     def route_gate_failures(
         self,
         *,
         slice_id: str,
         gate_results: list[dict[str, Any]],
-        shape_index: ShapePackIndex,
     ) -> RoutingBatch:
-        """Route gate failures into phase-local work items."""
-        # IMPL(single-layer): Extend signature with `shape_index` and resolve a
-        # deterministic owner shape for each failing file before triage.
-        # Unresolved or ambiguous ownership must emit blocked diagnostics (no
-        # speculative routing), matching Section 8.2.
+        """Route gate failures into DemotionTickets.
+
+        Args:
+            slice_id: Slice identifier.
+            gate_results: List of gate result dicts from LayerPromotionGate.
+
+        Returns:
+            RoutingBatch with all produced tickets.
+        """
         batch = RoutingBatch()
 
-        if not isinstance(gate_results, list):
-            reason = "gate_results must be a list"
-            logger.warning("route_gate_failures payload invalid: %s", reason)
-            batch.diagnostics.append(f"GATE_BATCH_INVALID:{reason}")
-            return batch
-
-        for index, gate_result in enumerate(gate_results):
-            if not isinstance(gate_result, dict):
-                reason = f"gate result at index {index} is {type(gate_result).__name__}"
-                logger.warning("Invalid gate result payload: %s", reason)
-                self._append_blocked(
-                    batch,
-                    source="GATE",
-                    source_id=None,
-                    slice_id=slice_id,
-                    finding_index=index,
-                    phase=self._active_phase,
-                    failing_files=[],
-                    failing_pins=[],
-                    evidence_refs=[],
-                    reason=reason,
-                    diagnostics=["invalid_gate_result_type"],
-                )
+        for gr in gate_results:
+            if gr.get("passed", True):
                 continue
 
-            gate_id = _normalize_text(gate_result.get("gate_id"))
-            passed = bool(gate_result.get("passed", False))
-            if passed:
-                continue
-
-            source_phase, source_issue = _infer_source_phase(
-                gate_result,
-                fallback=self._active_phase,
+            gate_id = _normalize_text(gr.get("gate_id")) or ""
+            findings = _project_gate_findings(gate_id, gr.get("findings", []))
+            source_resolution = _infer_source_layer(
+                gr,
+                fallback=self._active_layer,
                 gate_id=gate_id,
             )
-            if source_issue:
-                batch.diagnostics.append(f"GATE_SOURCE_PHASE:{source_issue}")
-
-            source_issue_type = _normalize_text(gate_result.get("source", "ALGORITHMIC_GATE"))
-            source = source_issue_type or "ALGORITHMIC_GATE"
-
-            findings = _project_gate_findings(
-                gate_id or "UNKNOWN_GATE",
-                gate_result.get("findings", []),
-            )
-
-            fallback_file = _first_nonempty(gate_result, _GATE_FINDING_FILE_KEYS)
-            fallback_evidence = _normalize_text_list(
-                gate_result.get("evidence") or gate_result.get("evidence_path")
-            )
-            if not findings:
-                findings = [
-                    GateFindingProjection(
-                        finding_index=0,
-                        file_path=fallback_file,
-                        required_change_type=_first_nonempty(gate_result, _GATE_FINDING_REQUIRED_CHANGE_KEYS),
-                        evidence_path=_first_nonempty(gate_result, _GATE_FINDING_EVIDENCE_KEYS),
-                    )
-                ]
-
-            for finding in findings:
-                finding_files = _normalize_text_list(finding.file_path)
-                evidence_refs = _unique_ordered(
-                    [
-                        *fallback_evidence,
-                        finding.evidence_path or "",
-                        finding.evidence_ref(gate_id or "UNKNOWN_GATE"),
-                    ]
-                )
-                explicit_change_type = finding.required_change_type
-                if not explicit_change_type:
-                    explicit_change_type = _first_nonempty(gate_result, _GATE_FINDING_REQUIRED_CHANGE_KEYS)
-
-                self._route_to_items(
-                    batch,
-                    source=source,
-                    source_id=gate_id,
-                    source_phase=source_phase,
-                    slice_id=slice_id,
-                    finding_index=finding.finding_index,
-                    finding_description=f"gate failure in {gate_id}",
-                    category=_normalize_text(gate_result.get("category", "")) or "",
-                    dimension=_normalize_text(gate_result.get("dimension", "")) or "",
-                    tags=_normalize_text_list(gate_result.get("tags", [])),
-                    explicit_change_type=explicit_change_type,
-                    file_paths=finding_files,
-                    evidence_paths=evidence_refs,
-                    shape_index=shape_index,
-                    failing_pins=_normalize_text_list(finding.pin_func_id or ""),
-                )
-
-            if source_issue:
+            source_layer = source_resolution.layer
+            if source_resolution.issue:
                 logger.warning(
-                    "Gate %s source phase resolution issue for result[%s]: %s",
-                    gate_id,
-                    index,
-                    source_issue,
+                    "Gate '%s' source-layer ambiguity: %s", gate_id, source_resolution.issue
                 )
+
+            failing_files = [finding.file_path for finding in findings if finding.file_path]
+            failing_pins = [finding.pin_func_id for finding in findings if finding.pin_func_id]
+            evidence_paths: list[str] = []
+            for finding in findings:
+                if finding.evidence_path:
+                    evidence_paths.append(finding.evidence_path)
+                evidence_paths.append(finding.evidence_ref(gate_id))
+
+            if not failing_files and not failing_pins and not evidence_paths:
+                diagnosis = (
+                    f"Gate failure '{gate_id}' is missing file/pin/evidence references; "
+                    "manual triage required to preserve traceability"
+                )
+                ticket, routing = _build_blocked_ticket(
+                    run_id=self._run_id,
+                    source="ALGORITHMIC_GATE",
+                    category="",
+                    gate=gate_id or None,
+                    active_layer=self._active_layer,
+                    diagnosis=diagnosis,
+                    diagnostics=["MISSING_TRACE_REFERENCES"],
+                )
+                ticket.slice_id = slice_id
+                batch.tickets.append(ticket)
+                batch.routings.append(routing)
+                continue
+
+            if not source_layer:
+                diagnosis = (
+                    f"Cannot route gate failure '{gate_id}': source layer unresolved "
+                    f"({source_resolution.issue or 'missing source metadata'})"
+                )
+                ticket, routing = _build_blocked_ticket(
+                    run_id=self._run_id,
+                    source="ALGORITHMIC_GATE",
+                    category="",
+                    gate=gate_id or None,
+                    active_layer=self._active_layer,
+                    diagnosis=diagnosis,
+                    failing_files=failing_files,
+                    failing_pins=failing_pins,
+                    evidence_refs=evidence_paths,
+                    diagnostics=["SOURCE_LAYER_UNRESOLVED"],
+                )
+                ticket.slice_id = slice_id
+                batch.tickets.append(ticket)
+                batch.routings.append(routing)
+                continue
+
+            ctx = DemotionContext(
+                active_layer=self._active_layer,
+                source_layer=source_layer,
+                source=_gate_source_for_layer(source_layer),
+                gate=gate_id,
+                failing_files=failing_files,
+                failing_pins=failing_pins,
+                evidence_paths=evidence_paths,
+            )
+
+            ticket, routing = self.route(ctx)
+            ticket.slice_id = slice_id
+            batch.tickets.append(ticket)
+            batch.routings.append(routing)
 
         return batch
 
@@ -774,86 +383,78 @@ class DemotionRouter:
         *,
         slice_id: str,
         test_failures: list[dict[str, Any]],
-        shape_index: ShapePackIndex,
     ) -> RoutingBatch:
-        """Route test failures into phase-local work items."""
+        """Route test failures into DemotionTickets.
+
+        Args:
+            slice_id: Slice identifier.
+            test_failures: List of test failure dicts.
+
+        Returns:
+            RoutingBatch with all produced tickets.
+        """
         batch = RoutingBatch()
 
-        if not isinstance(test_failures, list):
-            reason = "test_failures must be a list"
-            logger.warning("route_test_failures payload invalid: %s", reason)
-            batch.diagnostics.append(f"TEST_BATCH_INVALID:{reason}")
-            return batch
-
-        for index, failure in enumerate(test_failures):
-            if not isinstance(failure, dict):
-                reason = f"test failure at index {index} is {type(failure).__name__}"
-                logger.warning("Invalid test failure payload: %s", reason)
-                self._append_blocked(
-                    batch,
-                    source="TEST_FAILURE",
-                    source_id=None,
-                    slice_id=slice_id,
-                    finding_index=index,
-                    phase=self._active_phase,
-                    failing_files=[],
-                    failing_pins=[],
-                    evidence_refs=[],
-                    reason=reason,
-                    diagnostics=["invalid_test_failure_type"],
-                )
-                continue
-
-            source_phase, source_issue = _infer_source_phase(
+        for failure in test_failures:
+            source_resolution = _infer_source_layer(
                 failure,
-                fallback=self._active_phase,
-                gate_id=None,
+                fallback=self._active_layer,
             )
-            if source_issue:
-                batch.diagnostics.append(f"TEST_SOURCE_PHASE:{source_issue}")
-
-            failing_files = _normalize_text_list(failure.get("file") or failure.get("files", failure.get("file_path")))
-            evidence_refs = _normalize_text_list(
-                failure.get("raw_excerpt_path") or failure.get("evidence_path") or failure.get("evidence_paths")
-            )
-            if not evidence_refs:
-                evidence_refs = _normalize_text_list(
-                    failure.get("evidence")
+            source_layer = source_resolution.layer
+            failing_files = _normalize_text_list(failure.get("file"))
+            evidence_paths = _normalize_text_list(failure.get("raw_excerpt_path"))
+            if not failing_files and not evidence_paths:
+                diagnosis = (
+                    "Test failure is missing both file path and evidence path; "
+                    "manual triage required to preserve traceability"
                 )
-
-            if not failing_files:
-                self._append_blocked(
-                    batch,
+                ticket, routing = _build_blocked_ticket(
+                    run_id=self._run_id,
                     source="TEST_FAILURE",
-                    source_id=_normalize_text(failure.get("test_id")),
-                    slice_id=slice_id,
-                    finding_index=index,
-                    phase=self._active_phase,
-                    failing_files=[],
-                    failing_pins=[],
-                    evidence_refs=evidence_refs,
-                    reason="test failure has no parseable file path",
-                    diagnostics=["missing_file_paths"],
+                    category="",
+                    gate=None,
+                    active_layer=self._active_layer,
+                    diagnosis=diagnosis,
+                    diagnostics=["MISSING_TRACE_REFERENCES"],
                 )
+                ticket.slice_id = slice_id
+                batch.tickets.append(ticket)
+                batch.routings.append(routing)
                 continue
-
-            self._route_to_items(
-                batch,
+            if not source_layer:
+                issue_desc = source_resolution.issue or "missing source metadata"
+                diagnosis = (
+                    "Test failure source layer could not be inferred; "
+                    f"manual triage required ({issue_desc})"
+                )
+                ticket, routing = _build_blocked_ticket(
+                    run_id=self._run_id,
+                    source="TEST_FAILURE",
+                    category="",
+                    gate=None,
+                    active_layer=self._active_layer,
+                    diagnosis=diagnosis,
+                    failing_files=failing_files,
+                    evidence_refs=evidence_paths,
+                    diagnostics=["SOURCE_LAYER_UNRESOLVED"],
+                )
+                ticket.slice_id = slice_id
+                batch.tickets.append(ticket)
+                batch.routings.append(routing)
+                continue
+            ctx = DemotionContext(
+                active_layer=self._active_layer,
+                source_layer=source_layer,
                 source="TEST_FAILURE",
-                source_id=_normalize_text(failure.get("test_id")) or f"test_{index}",
-                source_phase=source_phase,
-                slice_id=slice_id,
-                finding_index=index,
-                finding_description=f"test failure in {', '.join(failing_files)}",
-                category="",
-                dimension="",
-                tags=[],
-                explicit_change_type=_normalize_text(failure.get("required_change_type")),
-                file_paths=failing_files,
-                evidence_paths=evidence_refs,
-                shape_index=shape_index,
-                failing_pins=[],
+                failing_files=failing_files,
+                evidence_paths=evidence_paths,
             )
+
+            ticket, routing = self.route(ctx)
+            ticket.slice_id = slice_id
+            ticket.diagnosis = failure.get("message", routing.reason)
+            batch.tickets.append(ticket)
+            batch.routings.append(routing)
 
         return batch
 
@@ -862,91 +463,71 @@ class DemotionRouter:
         *,
         slice_id: str,
         findings: list[dict[str, Any]],
-        shape_index: ShapePackIndex,
     ) -> RoutingBatch:
-        """Route review findings into phase-local work items."""
-        # IMPL(single-layer): For review findings, preserve
-        # `required_change_type` as triage authority input and classify only for
-        # current-phase handling (work item or block), with no backtracking.
+        """Route review findings into DemotionTickets.
+
+        Review findings are routed via canonical finding fields
+        (category/dimension/tags/required_change_type).
+
+        Args:
+            slice_id: Slice identifier.
+            findings: Review finding dicts with category field.
+
+        Returns:
+            RoutingBatch with all produced tickets.
+        """
         batch = RoutingBatch()
 
-        if not isinstance(findings, list):
-            reason = "findings must be a list"
-            logger.warning("route_review_findings payload invalid: %s", reason)
-            batch.diagnostics.append(f"REVIEW_BATCH_INVALID:{reason}")
-            return batch
-
-        for index, finding in enumerate(findings):
-            if not isinstance(finding, dict):
-                reason = f"review finding at index {index} is {type(finding).__name__}"
-                logger.warning("Invalid review finding payload: %s", reason)
-                self._append_blocked(
-                    batch,
-                    source="REVIEW",
-                    source_id=None,
-                    slice_id=slice_id,
-                    finding_index=index,
-                    phase=self._active_phase,
-                    failing_files=[],
-                    failing_pins=[],
-                    evidence_refs=[],
-                    reason=reason,
-                    diagnostics=["invalid_review_finding_type"],
-                )
-                continue
-
-            source_phase, source_issue = _infer_source_phase(
+        for finding in findings:
+            category = finding.get("category", "")
+            source_resolution = _infer_source_layer(
                 finding,
-                fallback=self._active_phase,
-                gate_id=None,
+                fallback=self._active_layer,
             )
-            if source_issue:
-                batch.diagnostics.append(f"REVIEW_SOURCE_PHASE:{source_issue}")
-
-            finding_files = _normalize_text_list(finding.get("files", []))
-            evidence_refs = _normalize_text_list(
-                finding.get("evidence_paths")
-                or finding.get("evidence")
-                or finding.get("evidence_path", "")
-            )
-            category = _normalize_text(finding.get("category")) or ""
-            dimension = _normalize_text(finding.get("dimension")) or ""
-            tags = _normalize_text_list(finding.get("tags", []))
-            required_change_type = _normalize_text(finding.get("required_change_type"))
-            finding_desc = _normalize_text(finding.get("description")) or _normalize_text(finding.get("title")) or "review finding"
-
-            if not finding_files:
-                self._append_blocked(
-                    batch,
-                    source="REVIEW",
-                    source_id=category or f"finding_{index}",
-                    slice_id=slice_id,
-                    finding_index=index,
-                    phase=self._active_phase,
-                    failing_files=[],
-                    failing_pins=_normalize_text_list(finding.get("pins", [])),
-                    evidence_refs=evidence_refs,
-                    reason="review finding has no parseable file paths",
-                    diagnostics=["missing_file_paths"],
+            source_layer = source_resolution.layer
+            failing_files = _normalize_text_list(finding.get("files", []))
+            failing_pins = _normalize_text_list(finding.get("pins", []))
+            evidence_paths = _normalize_text_list(finding.get("evidence_paths", []))
+            if not source_layer:
+                issue_desc = source_resolution.issue or "missing source metadata"
+                diagnosis = (
+                    "Review finding source layer could not be inferred; "
+                    f"manual triage required ({issue_desc})"
                 )
+                ticket, routing = _build_blocked_ticket(
+                    run_id=self._run_id,
+                    source="REVIEW",
+                    category=category,
+                    gate=None,
+                    active_layer=self._active_layer,
+                    diagnosis=diagnosis,
+                    failing_files=failing_files,
+                    failing_pins=failing_pins,
+                    evidence_refs=evidence_paths,
+                    diagnostics=["SOURCE_LAYER_UNRESOLVED"],
+                )
+                ticket.slice_id = slice_id
+                batch.tickets.append(ticket)
+                batch.routings.append(routing)
                 continue
 
-            self._route_to_items(
-                batch,
+            ctx = DemotionContext(
+                active_layer=self._active_layer,
+                source_layer=source_layer,
                 source="REVIEW",
-                source_id=category or f"finding_{index}",
-                source_phase=source_phase,
-                slice_id=slice_id,
-                finding_index=index,
-                finding_description=finding_desc,
                 category=category,
-                dimension=dimension,
-                tags=tags,
-                explicit_change_type=required_change_type,
-                file_paths=finding_files,
-                evidence_paths=evidence_refs,
-                shape_index=shape_index,
-                failing_pins=_normalize_text_list(finding.get("pins", [])),
+                dimension=finding.get("dimension", ""),
+                tags=list(finding.get("tags", []) or []),
+                required_change_type=finding.get("required_change_type", ""),
+                failing_files=failing_files,
+                failing_pins=failing_pins,
+                evidence_paths=evidence_paths,
             )
+
+            ticket, routing = self.route(ctx)
+            ticket.slice_id = slice_id
+            ticket.diagnosis = finding.get("description", routing.reason)
+            batch.tickets.append(ticket)
+            batch.routings.append(routing)
 
         return batch
