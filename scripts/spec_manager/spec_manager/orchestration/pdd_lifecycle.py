@@ -82,6 +82,9 @@
 # IMPL(single-layer): Lifecycle scheduler/result aggregation should migrate wake/result
 # payload handling from `layer` + `demotion_tickets` to `phase` + phase-local work-item
 # escalation diagnostics so WAITING/BLOCKED convergence logic matches monitor schemas.
+# IMPL(single-layer): `qa()` consumes `refinement.evals.runner`; when Section 14 A/B
+# evaluation lands, lifecycle QA gating should read variant comparison outputs
+# (baseline vs single-layer with fairness controls) instead of a single pass-rate scalar.
 #   Test requirements:
 #     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
 #     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.
