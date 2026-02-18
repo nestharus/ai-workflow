@@ -40,6 +40,12 @@
 # IMPL(single-layer): Keep orchestration handoff aligned with
 # `orchestration.demotion` escalation migration; Phase 0 may still consume intake
 # routing types, but phase remediation should consume work-item escalation outcomes.
+# IMPL(single-layer): `PromotionLoopRunner` handoff payloads (slice metadata, wake
+# events, scheduler results) should migrate from layer/demotion terms to shared
+# phase + work-item escalation contracts used by lifecycle convergence logic.
+# IMPL(single-layer): Orchestrator-owned lifecycle wrappers should migrate from
+# `run_layer`/`run_transition` layer APIs to phase-native lifecycle entrypoints once
+# `pdd_lifecycle` removes inter-layer transition execution.
 #   Test requirements:
 #     - Intake artifacts still generated.
 #     - Bootstrap output includes draft shapes, algorithm inventory, store inventory, and Libraries phase seeds.

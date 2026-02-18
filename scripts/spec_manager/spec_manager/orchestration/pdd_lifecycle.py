@@ -146,9 +146,11 @@ import re
 import subprocess
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.core.layer_types import Layer
 from spec_manager.orchestration.pdd_orchestrator import PddOrchestrator
 from spec_manager.refinement.workspace.manager import WorkspaceManager
@@ -176,10 +178,76 @@ _LAYER_LIFECYCLE_MODE: dict[Layer, LifecycleRunMode] = {
     "l2": "architecture",
     "l3": "code_quality",
 }
+# IMPL(single-layer): Replace layer-indexed dispatch tables with a PhaseId profile
+# registry (`libraries`/`architecture`/`quality`) and remove the lifecycle_mode/layer
+# matrix once PromotionLoop step selection is phase-native.
 
 _TERMINAL_SLICE_STATUSES = {"COMPLETE", "PROMOTED", "SKIPPED"}
 _LAYER_SEQUENCE: tuple[Layer, Layer, Layer] = ("l1", "l2", "l3")
 _LAYER_RANK: dict[str, int] = {layer: idx for idx, layer in enumerate(_LAYER_SEQUENCE)}
+_PHASE_SEQUENCE: tuple[PhaseId, PhaseId, PhaseId] = ("libraries", "architecture", "quality")
+_PHASE_TO_LAYER: dict[PhaseId, Layer] = {
+    "libraries": "l1",
+    "architecture": "l2",
+    "quality": "l3",
+}
+_LAYER_TO_PHASE: dict[Layer, PhaseId] = {
+    "l1": "libraries",
+    "l2": "architecture",
+    "l3": "quality",
+}
+
+
+@dataclass(slots=True)
+class LifecycleConfig:
+    max_iterations_per_slice: int = 20
+    max_work_items_per_phase: int = 50
+    stagnation_window: int = 2
+    governance_enabled: bool = True
+
+
+@dataclass(slots=True)
+class SkeletonDraft:
+    phase: PhaseId
+    draft_id: str
+    commit_tag: str
+    is_draft: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SkeletonFinal:
+    phase: PhaseId
+    draft_id: str
+    commit_tag: str
+    is_draft: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PhaseSnapshot:
+    phase: PhaseId
+    iteration_count: int = 0
+    slice_results: dict[str, dict[str, Any]] = field(default_factory=dict)
+    verifier_failures: dict[str, list[str]] = field(default_factory=dict)
+    changed_files: list[str] = field(default_factory=list)
+    open_work_items: int = 0
+    skeleton_draft: bool = True
+    blocked_reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "iteration_count": self.iteration_count,
+            "slice_results": self.slice_results,
+            "verifier_failures": self.verifier_failures,
+            "changed_files": self.changed_files,
+            "open_work_items": self.open_work_items,
+            "skeleton_draft": self.skeleton_draft,
+            "blocked_reason": self.blocked_reason,
+            "metadata": self.metadata,
+        }
 
 
 class PddLifecycle:
@@ -245,6 +313,10 @@ class PddLifecycle:
         governance_strict_mode: bool = False,
         model_profile: Any = None,
         planner_override_provider: Any = None,
+        max_iterations_per_slice: int = 20,
+        max_work_items_per_phase: int = 50,
+        stagnation_window: int = 2,
+        governance_enabled: bool = True,
     ) -> None:
         self.manager = manager
         self.orchestrator = PddOrchestrator(manager)
@@ -258,6 +330,9 @@ class PddLifecycle:
         self.max_demotions_per_layer = max_demotions_per_layer
         self.max_pipeline_passes = max(1, max_pipeline_passes)
         self.max_parallel = max(1, max_parallel)
+        # IMPL(single-layer): Retire demotion/pipeline-pass retry budgets when
+        # backtracking transitions are removed; per-phase iteration/work-item/stagnation
+        # bounds become the only lifecycle caps.
         self.integrate_full_test_every_n_iterations = max(1, integrate_full_test_every_n_iterations)
         self.refinement_max_issues = max(0, refinement_max_issues)
         self.qa_enforcement: Literal["hard", "soft"] = (
@@ -267,6 +342,12 @@ class PddLifecycle:
         self.governance_strict_mode = bool(governance_strict_mode)
         self._model_profile = model_profile
         self._planner_override_provider = planner_override_provider
+        self.lifecycle_config = LifecycleConfig(
+            max_iterations_per_slice=max(1, int(max_iterations_per_slice)),
+            max_work_items_per_phase=max(1, int(max_work_items_per_phase)),
+            stagnation_window=max(1, int(stagnation_window)),
+            governance_enabled=bool(governance_enabled),
+        )
         self._compute_quality = False
         self._cost_ledger: Any | None = None
         self.transition_investigator_budget = 2
@@ -666,17 +747,338 @@ class PddLifecycle:
         """Extension hook invoked after a transition run completes."""
         return None
 
+    @staticmethod
+    def _phase_scope_name(phase: PhaseId) -> str:
+        if phase == "libraries":
+            return "l1"
+        if phase == "architecture":
+            return "l2"
+        return "l3"
+
+    def _phase_out_of_authority_block(
+        self,
+        phase: PhaseId,
+        phase_result: dict[str, Any],
+    ) -> str | None:
+        demotion_pause = phase_result.get("demotion_pause", {})
+        if isinstance(demotion_pause, dict) and bool(demotion_pause.get("paused", False)):
+            reason = str(demotion_pause.get("reason") or "").strip()
+            if reason:
+                return reason
+            return f"Phase '{phase}' encountered out-of-authority findings and is blocked."
+
+        exit_refinement = phase_result.get("exit_refinement", {})
+        if not isinstance(exit_refinement, dict):
+            return None
+        if phase == "libraries":
+            return None
+        try:
+            demotion_count = int(exit_refinement.get("demotion_tickets", 0) or 0)
+        except (TypeError, ValueError):
+            demotion_count = 0
+        if demotion_count > 0:
+            return (
+                f"Phase '{phase}' emitted {demotion_count} out-of-authority findings; "
+                "forward-only lifecycle blocks instead of backtracking."
+            )
+        return None
+
+    def _phase_slice_results(self, phase_result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        rows = self._layer_slice_rows(phase_result)
+        slice_results: dict[str, dict[str, Any]] = {}
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            raw_slice_id = str(row.get("slice_id", "")).strip()
+            slice_id = raw_slice_id or f"slice_{idx + 1}"
+            slice_results[slice_id] = dict(row)
+        return slice_results
+
+    def _phase_verifier_failures(
+        self, phase: PhaseId, phase_result: dict[str, Any]
+    ) -> dict[str, list[str]]:
+        failures: dict[str, list[str]] = {}
+        for slice_id, row in self._phase_slice_results(phase_result).items():
+            status = str(row.get("status", "")).strip().upper()
+            if status in _TERMINAL_SLICE_STATUSES:
+                continue
+            details: list[str] = []
+            remaining = row.get("remaining_gaps", 0)
+            if isinstance(remaining, list):
+                details.extend(str(item).strip() for item in remaining if str(item).strip())
+            elif isinstance(remaining, int) and remaining > 0:
+                details.append(f"remaining_gaps={remaining}")
+            error = str(row.get("error", "")).strip()
+            if error:
+                details.append(error)
+            if not details:
+                details.append(f"non-terminal slice status: {status or 'UNKNOWN'}")
+            failures[slice_id] = details[:10]
+
+        exit_refinement = phase_result.get("exit_refinement", {})
+        if isinstance(exit_refinement, dict):
+            exit_error = str(exit_refinement.get("error", "")).strip()
+            if exit_error:
+                failures[f"{phase}:exit_refinement"] = [exit_error]
+        return failures
+
+    def _phase_changed_files(self, phase_result: dict[str, Any]) -> list[str]:
+        changed_files: list[str] = []
+        for row in self._phase_slice_results(phase_result).values():
+            for key in ("changed_files", "files"):
+                raw = row.get(key)
+                if isinstance(raw, list):
+                    changed_files.extend(str(item).strip() for item in raw if str(item).strip())
+        raw_result_files = phase_result.get("changed_files", [])
+        if isinstance(raw_result_files, list):
+            changed_files.extend(str(item).strip() for item in raw_result_files if str(item).strip())
+        return sorted({path for path in changed_files if path})
+
+    def _phase_open_work_items(self, phase: PhaseId) -> int:
+        # IMPL(single-layer): Phase convergence/open-item accounting should consume
+        # `WorkItemStore.list_open(phase=...)` over shape-routed work items; the work-item
+        # `created_in_phase` field is audit metadata and must not be used for cross-phase
+        # triage.
+        from spec_manager.orchestration.coordination.work_items import WorkItemStore
+
+        coordination_dir = (
+            self.manager.workspace_path / ".pdd_runs" / self.manager.run_id / "coordination"
+        )
+        if not coordination_dir.exists():
+            return 0
+        try:
+            store = WorkItemStore(coordination_dir)
+            return len(store.list_open(phase=phase))
+        except Exception:
+            logger.warning("Failed to count open work items for phase '%s'", phase, exc_info=True)
+            return 0
+
+    def _phase_progress_hash(self, snapshot: PhaseSnapshot) -> str:
+        progress_payload = {
+            "phase": snapshot.phase,
+            "changed_files": sorted(snapshot.changed_files),
+            "open_work_items": snapshot.open_work_items,
+            "verifier_failures": snapshot.verifier_failures,
+        }
+        return _hash_text(json.dumps(progress_payload, sort_keys=True))
+
+    def _phase_convergence_flags(self, snapshot: PhaseSnapshot) -> dict[str, bool]:
+        within_iteration_bounds = (
+            snapshot.iteration_count <= self.lifecycle_config.max_iterations_per_slice
+        )
+        no_open_work_items = snapshot.open_work_items == 0
+        verifiers_pass = len(snapshot.verifier_failures) == 0
+        phase_authority_clear = snapshot.blocked_reason is None
+        skeleton_non_draft = not snapshot.skeleton_draft
+        if snapshot.phase == "libraries":
+            return {
+                "skeleton_non_draft": skeleton_non_draft,
+                "library_shape_verifiers_pass": verifiers_pass,
+                "dependency_drift_resolved": phase_authority_clear,
+                "no_open_work_items": no_open_work_items,
+                "within_iteration_bounds": within_iteration_bounds,
+            }
+        if snapshot.phase == "architecture":
+            return {
+                "skeleton_non_draft": skeleton_non_draft,
+                "contract_verifiers_pass": verifiers_pass,
+                "import_boundary_rules_satisfied": phase_authority_clear,
+                "no_open_work_items": no_open_work_items,
+                "within_iteration_bounds": within_iteration_bounds,
+            }
+        return {
+            "all_tests_pass": verifiers_pass,
+            "contract_verifiers_pass": verifiers_pass,
+            "refactor_items_closed": no_open_work_items,
+            "diff_impact_policy_satisfied": phase_authority_clear,
+            "within_iteration_bounds": within_iteration_bounds,
+        }
+
+    def _propose_skeleton(self, phase: PhaseId) -> SkeletonDraft:
+        phase_scope = self._phase_scope_name(phase)
+        draft_id = _hash_text(f"{self.manager.run_id}:{phase}:draft")[:12]
+        tag = f"pdd/{self.manager.run_id}/{phase_scope}/skeleton-draft"
+        tag_recorded = self._record_git_tag(tag)
+        return SkeletonDraft(
+            phase=phase,
+            draft_id=draft_id,
+            commit_tag=tag,
+            metadata={"tag_recorded": tag_recorded},
+        )
+
+    def _refine_skeleton(self, phase: PhaseId, draft: SkeletonDraft) -> SkeletonFinal:
+        phase_scope = self._phase_scope_name(phase)
+        tag = f"pdd/{self.manager.run_id}/{phase_scope}/skeleton-final"
+        tag_recorded = self._record_git_tag(tag)
+        return SkeletonFinal(
+            phase=phase,
+            draft_id=draft.draft_id,
+            commit_tag=tag,
+            metadata={
+                "entry_commit_tag": draft.commit_tag,
+                "entry_tag_recorded": bool(draft.metadata.get("tag_recorded", False)),
+                "tag_recorded": tag_recorded,
+            },
+        )
+
+    def _check_phase_convergence(self, snapshot: PhaseSnapshot) -> tuple[bool, str | None]:
+        if snapshot.blocked_reason:
+            return False, snapshot.blocked_reason
+        flags = self._phase_convergence_flags(snapshot)
+        failing = [key for key, passed in flags.items() if not passed]
+        if not failing:
+            return True, None
+        reason = ", ".join(failing)
+        return False, f"Phase '{snapshot.phase}' not converged ({reason})."
+
+    def _run_phase(self, phase: PhaseId) -> PhaseSnapshot:
+        layer = _PHASE_TO_LAYER[phase]
+        state_mgr = getattr(self, "_state_mgr", None)
+        iteration_count = 0
+        if state_mgr is not None:
+            state = state_mgr.increment_phase_iteration(phase)
+            iteration_count = int(state.phase_iteration_counts.get(phase, 0))
+
+        draft = self._propose_skeleton(phase)
+        phase_result: dict[str, Any] = {}
+        phase_meta: dict[str, Any] = {"phase": phase, "layer": layer}
+        blocked_reason: str | None = None
+
+        try:
+            if phase == "libraries":
+                phase_result, approval = self._run_l1_with_approval()
+                phase_meta["approval"] = approval
+                if str((approval or {}).get("status", "")).upper() == "WAITING":
+                    blocked_reason = "Libraries phase waiting for planner-recorded answers."
+                    phase_meta["waiting"] = True
+                    phase_meta["awaiting_checkpoint"] = "l1_approval"
+                elif bool((approval or {}).get("approved", False)):
+                    self._record_git_tag(f"pdd/{self.manager.run_id}/l1-approved")
+            elif phase == "architecture":
+                phase_result = self._run_layer(layer)
+                if self.mode == "interactive":
+                    checkpoint = self._request_l2_checkpoint(phase_result)
+                    phase_meta["checkpoint"] = checkpoint
+                    if str((checkpoint or {}).get("status", "")).upper() == "WAITING":
+                        blocked_reason = "Architecture phase waiting for checkpoint answers."
+                        phase_meta["waiting"] = True
+                        phase_meta["awaiting_checkpoint"] = "l2_checkpoint"
+                    elif bool((checkpoint or {}).get("approved", False)):
+                        self._record_git_tag(f"pdd/{self.manager.run_id}/l2-approved")
+            else:
+                phase_result = self._run_layer(layer)
+        except Exception as exc:
+            blocked_reason = f"Phase '{phase}' execution failed: {exc}"
+            phase_meta["error"] = str(exc)
+            logger.warning(blocked_reason, exc_info=True)
+
+        if blocked_reason is None:
+            blocked_reason = self._phase_out_of_authority_block(phase, phase_result)
+
+        open_work_items = self._phase_open_work_items(phase)
+        if open_work_items > self.lifecycle_config.max_work_items_per_phase:
+            blocked_reason = (
+                f"Phase '{phase}' exceeded max_work_items_per_phase="
+                f"{self.lifecycle_config.max_work_items_per_phase} with {open_work_items} open items."
+            )
+            self._emit_lifecycle_question_signal(
+                checkpoint=f"{phase}_work_item_cap",
+                signal_id=f"{phase}:work_item_cap",
+                layer=layer,
+                taxonomy_hint="CONSTRAINT",
+                canonical_key_hint=f"pdd.lifecycle.{phase}.work_item_cap",
+                text=(
+                    f"{phase.title()} phase has {open_work_items} open work items, which exceeds "
+                    f"the configured cap of {self.lifecycle_config.max_work_items_per_phase}. "
+                    "Please prioritize or narrow scope before continuing."
+                ),
+                answer_spec_hint={
+                    "preferred_kind": "choice_or_text",
+                    "choices": [
+                        {"id": "narrow_scope", "label": "Narrow scope"},
+                        {"id": "raise_cap", "label": "Raise cap"},
+                    ],
+                },
+                payload={
+                    "phase": phase,
+                    "open_work_items": open_work_items,
+                    "max_work_items_per_phase": self.lifecycle_config.max_work_items_per_phase,
+                },
+            )
+
+        snapshot = PhaseSnapshot(
+            phase=phase,
+            iteration_count=iteration_count,
+            slice_results=self._phase_slice_results(phase_result),
+            verifier_failures=self._phase_verifier_failures(phase, phase_result),
+            changed_files=self._phase_changed_files(phase_result),
+            open_work_items=open_work_items,
+            skeleton_draft=True,
+            blocked_reason=blocked_reason,
+            metadata={
+                **phase_meta,
+                "entry_skeleton": {
+                    "draft_id": draft.draft_id,
+                    "commit_tag": draft.commit_tag,
+                    "is_draft": draft.is_draft,
+                    "metadata": draft.metadata,
+                },
+                "phase_result": phase_result,
+            },
+        )
+
+        if state_mgr is not None:
+            state_mgr.update_state(open_work_item_count=open_work_items)
+            progress_hash = self._phase_progress_hash(snapshot)
+            verifier_id = f"{phase}:summary"
+            if snapshot.verifier_failures:
+                verifier_id = sorted(snapshot.verifier_failures)[0]
+            state_mgr.record_verifier_progress(
+                verifier_id=verifier_id,
+                progress_hash=progress_hash,
+                passed=not snapshot.verifier_failures,
+            )
+            state_after = state_mgr.read_state()
+            if (
+                state_after is not None
+                and state_after.blocked_reason
+                and snapshot.blocked_reason is None
+            ):
+                snapshot.blocked_reason = state_after.blocked_reason
+
+        if snapshot.blocked_reason is None:
+            final = self._refine_skeleton(phase, draft)
+            snapshot.skeleton_draft = final.is_draft
+            snapshot.metadata["final_skeleton"] = {
+                "draft_id": final.draft_id,
+                "commit_tag": final.commit_tag,
+                "is_draft": final.is_draft,
+                "metadata": final.metadata,
+            }
+
+        if state_mgr is not None:
+            convergence_flags = self._phase_convergence_flags(snapshot)
+            state_mgr.update_phase_convergence(phase, **convergence_flags)
+
+        return snapshot
+
     def run(self) -> dict[str, Any]:
-        """Run the full layer pipeline: intake → L1 → L2 → L3 → QA.
+        """Run forward-only phases: intake -> libraries -> architecture -> quality.
 
         Returns:
-            Summary dict with results from each layer and transition.
+            Summary dict with per-phase snapshots and global termination state.
         """
+        # IMPL(single-layer): Collapse `run()` to one forward-only phase traversal
+        # (Libraries -> Architecture -> Quality) with per-phase convergence/blocking;
+        # remove pipeline-pass retries and transition handoffs.
         from spec_manager.orchestration.run_state import RunConfig, RunStateManager
 
-        results: dict[str, Any] = {}
-
-        # Initialize run state tracking
+        results: dict[str, Any] = {
+            "phase_order": list(_PHASE_SEQUENCE),
+            "phases": {},
+            "blocked": False,
+            "waiting": False,
+        }
         state_mgr = RunStateManager(
             workspace_root=self.manager.workspace_path,
             run_id=self.manager.run_id,
@@ -690,19 +1092,26 @@ class PddLifecycle:
                 input_folder=str(self.manager.structure.input_folder)
                 if hasattr(self.manager.structure, "input_folder")
                 else "",
+                max_iterations_per_slice=self.lifecycle_config.max_iterations_per_slice,
+                max_work_items_per_phase=self.lifecycle_config.max_work_items_per_phase,
+                stagnation_window=self.lifecycle_config.stagnation_window,
                 max_approval_iterations=self.max_approval_iterations,
                 enable_snapshots=True,
                 enable_quality_scoring=self._compute_quality,
             )
         )
-        state_mgr.update_state(phase="intake", active_layer="")
+        state_mgr.update_state(
+            phase="intake",
+            active_phase="libraries",
+            blocked_reason=None,
+            stagnation_window_remaining=self.lifecycle_config.stagnation_window,
+        )
 
-        # Phase 0: Intake (raw prose → code-as-spec, if needed)
+        # Phase 0 intake/bootstrap runs once.
         intake_result = self._run_intake()
         results["intake"] = intake_result
         intake_ran = bool(intake_result.get("ran", True))
 
-        # Bootstrap constraints from intake artifacts only when intake ran.
         if intake_ran:
             try:
                 from spec_manager.orchestration.under_spec.bootstrap import (
@@ -725,629 +1134,69 @@ class PddLifecycle:
                 "reason": "Phase 0 intake skipped",
             }
 
-        state_mgr.update_state(phase="intake_done")
-
-        # Overall pipeline pass cap (budget #4)
-        results["pipeline_pass"] = 1
-        results["max_pipeline_passes"] = self.max_pipeline_passes
-
         base_ref_name = f"pdd/{self.manager.run_id}/base"
-        base_ref_for_setup: str | None = None
+        base_ref_for_setup = None
         if intake_ran:
             base_ref_created = self._record_git_ref(base_ref_name)
             results["base_ref"] = {"name": base_ref_name, "created": base_ref_created}
-            if not base_ref_created:
-                logger.warning(
-                    "Failed to create base ref '%s' after intake; "
-                    "falling back to default HEAD setup",
-                    base_ref_name,
-                )
-            else:
+            if base_ref_created:
                 base_ref_for_setup = base_ref_name
 
-        # Setup layer worktrees if managed
         if self.worktree_manager:
             if base_ref_for_setup is not None:
                 results["setup"] = self.worktree_manager.setup_layers(base_ref=base_ref_for_setup)
             else:
                 results["setup"] = self.worktree_manager.setup_layers()
 
-        # Bounded full-pipeline passes (budget #4).
-        results["pipeline_pass_history"] = []
-        global_termination: dict[str, Any] = {"passed": False}
-        for pipeline_pass in range(1, self.max_pipeline_passes + 1):
-            results["pipeline_pass"] = pipeline_pass
-            pass_outcome: dict[str, Any] = {
-                "pipeline_pass": pipeline_pass,
-                "l2_blocked": False,
-                "l2_blocked_reason": "",
-                "l3_blocked": False,
-                "l3_blocked_reason": "",
-                "release_blocked": False,
-                "release_blocked_reason": "",
-            }
+        state_mgr.update_state(phase="intake_done")
 
-            # L1: Code-as-Spec (with human approval loop)
-            state_mgr.update_state(phase="l1", active_layer="l1")
-            l1_result, approval = self._run_l1_with_approval()
-            pass_outcome["l1"] = l1_result
-            pass_outcome["approval"] = approval
-            if str((approval or {}).get("status", "")).upper() == "WAITING":
-                waiting_reason = "L1 approval waiting for planner-recorded answers"
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "waiting",
-                        "reason": waiting_reason,
-                    }
-                )
-                results["awaiting_checkpoint"] = "l1_approval"
-                results["waiting"] = True
-                state_mgr.update_state(phase="waiting_l1_approval", active_layer="l1")
-                return results
-            self._record_git_tag(f"pdd/{self.manager.run_id}/l1-approved")
+        for phase in _PHASE_SEQUENCE:
             state_mgr.update_state(
-                layers_completed=["l1"],
-                phase="l1_l2_transition",
-                active_layer="l1",
+                active_phase=phase,
+                phase=phase,
+                blocked_reason=None,
             )
+            snapshot = self._run_phase(phase)
+            phase_payload = snapshot.to_dict()
+            converged, convergence_reason = self._check_phase_convergence(snapshot)
+            phase_payload["converged"] = converged
+            if convergence_reason:
+                phase_payload["convergence_reason"] = convergence_reason
+            results["phases"][phase] = phase_payload
 
-            l1_termination = (
-                l1_result.get("layer_termination") if isinstance(l1_result, dict) else None
-            )
-            if (
-                isinstance(l1_termination, dict)
-                and l1_termination
-                and not l1_termination.get("passed", False)
-            ):
-                pass_outcome["l2_blocked"] = True
-                pass_outcome["l2_blocked_reason"] = "L1 layer termination checks failed"
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["l2_blocked_reason"],
-                    }
-                )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-
-            # L1→L2 transition: architectural refinement (may demote to L1)
-            pass_outcome["l1_l2_transition"] = self._run_transition("l1", "l2")
-            l2_transition_blocked, l2_transition_reason = self._transition_block_status(
-                pass_outcome["l1_l2_transition"],
-                default_reason="L1→L2 transition blocked",
-            )
-            if l2_transition_blocked:
-                pass_outcome["l2_blocked"] = True
-                pass_outcome["l2_blocked_reason"] = l2_transition_reason
-                l1_l2_transition = pass_outcome.get("l1_l2_transition", {})
-                if isinstance(l1_l2_transition, dict) and bool(
-                    l1_l2_transition.get("escalation_required", False)
-                ):
-                    pass_outcome["l2_blocked_reason"] = (
-                        f"{l2_transition_reason} (interactive approval required)"
-                    )
-                    results.update(pass_outcome)
-                    results["pipeline_pass_history"].append(
-                        {
-                            "pass": pipeline_pass,
-                            "status": "blocked",
-                            "reason": pass_outcome["l2_blocked_reason"],
-                        }
-                    )
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
-                    results["escalation_required"] = True
-                    state_mgr.update_state(phase="blocked_transition_escalation")
-                    return results
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["l2_blocked_reason"],
-                    }
-                )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-
-            l1_l2_activation_gate: dict[str, Any] = {
-                "drained_baseline": {
-                    "passed": True,
-                    "note": "No worktree manager; drained-baseline gate not enforced",
+            if not converged:
+                blocked_reason = convergence_reason or "phase convergence failed"
+                results["blocked"] = True
+                results["blocked_phase"] = phase
+                results["blocked_reason"] = blocked_reason
+                results["global_termination"] = {
+                    "passed": False,
+                    "phase": phase,
+                    "reason": blocked_reason,
                 }
-            }
-            if self.worktree_manager is not None:
-                drained_baseline = bool(self.worktree_manager.can_advance_layer("l1"))
-                l1_l2_activation_gate["drained_baseline"] = {
-                    "passed": drained_baseline,
-                    "error": (
-                        ""
-                        if drained_baseline
-                        else "Pipeline not drained for L1→L2 activation "
-                        "(requires l2/l3 dirty == clean)"
-                    ),
-                }
-                if not drained_baseline:
-                    pass_outcome["l2_blocked"] = True
-                    pass_outcome["l2_blocked_reason"] = str(
-                        l1_l2_activation_gate["drained_baseline"].get("error", "")
-                    )
-                    pass_outcome["l1_l2_activation_gate"] = l1_l2_activation_gate
-                    results.update(pass_outcome)
-                    results["pipeline_pass_history"].append(
-                        {
-                            "pass": pipeline_pass,
-                            "status": "retry",
-                            "reason": pass_outcome["l2_blocked_reason"],
-                        }
-                    )
-                    if pipeline_pass >= self.max_pipeline_passes:
-                        results["release_blocked"] = True
-                        results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
-                        state_mgr.update_state(phase="blocked_pipeline_cap")
-                        return results
-                    continue
-            pass_outcome["l1_l2_activation_gate"] = l1_l2_activation_gate
-
-            pass_outcome["l1_l2_global_verify"] = self._run_l1_l2_activation_verify()
-            if not bool(pass_outcome["l1_l2_global_verify"].get("passed", False)):
-                pass_outcome["l2_blocked"] = True
-                pass_outcome["l2_blocked_reason"] = "L1→L2 global verify checkpoint failed"
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["l2_blocked_reason"],
-                    }
-                )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l2_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-            state_mgr.update_state(
-                transitions_completed=["l1_l2"],
-                phase="l2",
-                active_layer="l2",
-            )
-            if self.worktree_manager:
-                pass_outcome["l1_slice_cleanup"] = self._cleanup_inactive_layer_slices("l1")
-
-            # L2: Architecture
-            pass_outcome["l2"] = self._run_layer("l2")
-            if self.mode == "interactive":
-                pass_outcome["l2_checkpoint"] = self._request_l2_checkpoint(pass_outcome["l2"])
-                if str(pass_outcome["l2_checkpoint"].get("status", "")).upper() == "WAITING":
-                    waiting_reason = "L2 checkpoint waiting for planner-recorded answers"
-                    results.update(pass_outcome)
-                    results["pipeline_pass_history"].append(
-                        {
-                            "pass": pipeline_pass,
-                            "status": "waiting",
-                            "reason": waiting_reason,
-                        }
-                    )
-                    results["awaiting_checkpoint"] = "l2_checkpoint"
+                if bool(phase_payload.get("metadata", {}).get("waiting", False)):
                     results["waiting"] = True
-                    state_mgr.update_state(phase="waiting_l2_checkpoint", active_layer="l2")
-                    return results
-                if bool(pass_outcome["l2_checkpoint"].get("approved", False)):
-                    self._record_git_tag(f"pdd/{self.manager.run_id}/l2-approved")
-            l2_termination = (
-                pass_outcome["l2"].get("layer_termination")
-                if isinstance(pass_outcome["l2"], dict)
-                else None
-            )
-            if (
-                isinstance(l2_termination, dict)
-                and l2_termination
-                and not l2_termination.get("passed", False)
-            ):
-                pass_outcome["l3_blocked"] = True
-                l2_pause = (
-                    pass_outcome["l2"].get("demotion_pause", {})
-                    if isinstance(pass_outcome["l2"], dict)
-                    else {}
-                )
-                if isinstance(l2_pause, dict) and bool(l2_pause.get("paused", False)):
-                    pass_outcome["l3_blocked_reason"] = str(
-                        l2_pause.get("reason")
-                        or "L2 creative work paused due to lower-layer demotion"
+                    results["awaiting_checkpoint"] = phase_payload["metadata"].get(
+                        "awaiting_checkpoint", ""
                     )
-                else:
-                    pass_outcome["l3_blocked_reason"] = "L2 layer termination checks failed"
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["l3_blocked_reason"],
-                    }
+                state_mgr.update_state(
+                    phase=f"blocked_{phase}",
+                    blocked_reason=blocked_reason,
                 )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-            self._record_git_ref(f"pdd/{self.manager.run_id}/l2/clean")
-            state_mgr.update_state(
-                layers_completed=["l1", "l2"],
-                phase="l2_l3_transition",
-                active_layer="l2",
-            )
-
-            # L2→L3 transition: code quality refinement (may demote to L2)
-            pass_outcome["l2_l3_transition"] = self._run_transition("l2", "l3")
-            l3_transition_blocked, l3_transition_reason = self._transition_block_status(
-                pass_outcome["l2_l3_transition"],
-                default_reason="L2→L3 transition blocked",
-            )
-            if l3_transition_blocked:
-                pass_outcome["l3_blocked"] = True
-                pass_outcome["l3_blocked_reason"] = l3_transition_reason
-                l2_l3_transition = pass_outcome.get("l2_l3_transition", {})
-                if isinstance(l2_l3_transition, dict) and bool(
-                    l2_l3_transition.get("escalation_required", False)
-                ):
-                    pass_outcome["l3_blocked_reason"] = (
-                        f"{l3_transition_reason} (interactive approval required)"
-                    )
-                    results.update(pass_outcome)
-                    results["pipeline_pass_history"].append(
-                        {
-                            "pass": pipeline_pass,
-                            "status": "blocked",
-                            "reason": pass_outcome["l3_blocked_reason"],
-                        }
-                    )
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
-                    results["escalation_required"] = True
-                    state_mgr.update_state(phase="blocked_transition_escalation")
-                    return results
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["l3_blocked_reason"],
-                    }
-                )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["l3_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-            state_mgr.update_state(
-                transitions_completed=["l1_l2", "l2_l3"],
-                phase="l3",
-                active_layer="l3",
-            )
-            if self.worktree_manager:
-                pass_outcome["l2_slice_cleanup"] = self._cleanup_inactive_layer_slices("l2")
-
-            # L3: Clean Code
-            pass_outcome["l3"] = self._run_layer("l3")
-            l3_termination = (
-                pass_outcome["l3"].get("layer_termination")
-                if isinstance(pass_outcome["l3"], dict)
-                else None
-            )
-            if (
-                isinstance(l3_termination, dict)
-                and l3_termination
-                and not l3_termination.get("passed", False)
-            ):
-                pass_outcome["release_blocked"] = True
-                pass_outcome["release_blocked_reason"] = "L3 layer termination checks failed"
-                results.update(pass_outcome)
-                results["pipeline_pass_history"].append(
-                    {
-                        "pass": pipeline_pass,
-                        "status": "retry",
-                        "reason": pass_outcome["release_blocked_reason"],
-                    }
-                )
-                if pipeline_pass >= self.max_pipeline_passes:
-                    results["release_blocked"] = True
-                    results["release_blocked_reason"] = pass_outcome["release_blocked_reason"]
-                    state_mgr.update_state(phase="blocked_pipeline_cap")
-                    return results
-                continue
-            self._record_git_ref(f"pdd/{self.manager.run_id}/l3/clean")
-            state_mgr.update_state(
-                layers_completed=["l1", "l2", "l3"],
-                phase="qa",
-                active_layer="",
-            )
-
-            # Final QA mode: evals/tests -> demotions -> slice rework rounds.
-            pass_outcome["qa_mode"] = self._run_qa_mode()
-            pass_outcome["qa"] = pass_outcome["qa_mode"].get("qa", {})
-            pass_outcome["qa_gate"] = pass_outcome["qa_mode"].get("qa_gate", {})
-            pass_outcome["global_termination"] = self._evaluate_global_termination(pass_outcome)
-
-            results.update(pass_outcome)
-            global_termination = pass_outcome["global_termination"]
-            results["pipeline_pass_history"].append(
-                {
-                    "pass": pipeline_pass,
-                    "status": "pass" if global_termination.get("passed", False) else "retry",
-                    "reason": (
-                        ""
-                        if global_termination.get("passed", False)
-                        else "Global termination checks failed"
-                    ),
-                }
-            )
-            if global_termination.get("passed", False):
-                break
-
-            logger.warning(
-                "Pipeline pass %d/%d failed global termination checks",
-                pipeline_pass,
-                self.max_pipeline_passes,
-            )
-            if pipeline_pass >= self.max_pipeline_passes:
-                results["release_blocked"] = True
-                results["release_blocked_reason"] = (
-                    "Global termination checks failed and pipeline pass cap reached"
-                )
-                state_mgr.update_state(phase="blocked_pipeline_cap")
                 return results
 
-        if not global_termination.get("passed", False):
-            results["release_blocked"] = True
-            results["release_blocked_reason"] = "Global termination checks did not pass"
-            state_mgr.update_state(phase="blocked_global_termination")
-            return results
+            if phase != _PHASE_SEQUENCE[-1]:
+                state_mgr.advance_phase()
 
-        # Scoring
-        from spec_manager.evaluation.scoring import RunReporter
-
-        reporter = RunReporter(
-            workspace_root=self.manager.workspace_path,
-            run_id=self.manager.run_id,
-        )
-        scorecard = reporter.compute()
-        reporter.write(scorecard)
-        results["scorecard"] = scorecard.to_dict()
-
-        # Read config flags for optional steps
-        _run_config = state_mgr.read_config()
-        _enable_quality = (
-            _run_config.enable_quality_scoring if _run_config else self._compute_quality
-        )
-        producer_model_id = self._resolve_model_id_for_role("refinement")
-        judge_model_id = self._resolve_model_id_for_role("judge")
-        git_sha = self._read_git_sha() or ""
-
-        # Snapshot source tree and existing run reports (always on).
-        try:
-            from spec_manager.evaluation.snapshot import snapshot_run
-
-            snapshot_run(
-                self.manager.structure.root,
-                self.manager.run_id,
-                pipeline_git_sha=git_sha,
-                producer_model_id=producer_model_id,
-                judge_model_id=judge_model_id,
-            )
-        except Exception as exc:
-            logger.warning("Snapshot failed: %s", exc)
-
-        arch_digest: dict[str, Any] | None = None
-        code_digest: dict[str, Any] | None = None
-        spec_hash_for_snapshot = ""
-        try:
-            from spec_manager.evaluation.digests import (
-                build_architecture_digest,
-                build_code_digest,
-            )
-
-            arch_digest = build_architecture_digest(
-                self.manager.structure.root,
-                self.manager.run_id,
-                git_sha=git_sha,
-                producer_model_id=producer_model_id,
-            )
-            code_digest = build_code_digest(
-                self.manager.structure.root,
-                self.manager.run_id,
-                git_sha=git_sha,
-                producer_model_id=producer_model_id,
-            )
-
-            run_reports = self.manager.workspace_path / "reports" / "pdd" / self.manager.run_id
-            run_reports.mkdir(parents=True, exist_ok=True)
-            (run_reports / "architecture_digest.json").write_text(
-                json.dumps(arch_digest, indent=2), encoding="utf-8"
-            )
-            (run_reports / "code_digest.json").write_text(
-                json.dumps(code_digest, indent=2), encoding="utf-8"
-            )
-            if isinstance(arch_digest, dict):
-                spec_payload = arch_digest.get("spec", {})
-                if isinstance(spec_payload, dict):
-                    candidate_hash = spec_payload.get("spec_hash", "")
-                    if isinstance(candidate_hash, str):
-                        spec_hash_for_snapshot = candidate_hash
-        except Exception as digest_exc:
-            logger.warning("Digest build failed: %s", digest_exc, exc_info=True)
-
-        # Quality scoring (optional)
-        if _enable_quality:
-            if arch_digest is None or code_digest is None:
-                results["quality_scorecard"] = {"error": "missing digests"}
-            else:
-                try:
-                    from spec_manager.evaluation.quality import QualityReporter
-                    from spec_manager.refinement.evals.judges.arch_quality import (
-                        ArchitectureQualityJudge,
-                    )
-                    from spec_manager.refinement.evals.judges.cache import JudgeCache
-
-                    arch_judge_output = None
-                    try:
-                        arch_judge = ArchitectureQualityJudge(
-                            workspace=self.manager.structure.root,
-                            cache=JudgeCache(
-                                self.manager.structure.root / "analysis" / "judge_cache"
-                            ),
-                            model_id=judge_model_id,
-                            producer_model_id=producer_model_id,
-                            allow_self_judge=judge_model_id == producer_model_id,
-                        )
-                        arch_judge_output = arch_judge.evaluate(arch_digest).model_dump()
-                    except Exception as judge_exc:
-                        logger.warning("Architecture judge failed: %s", judge_exc, exc_info=True)
-
-                    quality_reporter = QualityReporter(
-                        self.manager.structure.root, self.manager.run_id
-                    )
-                    quality_scorecard = quality_reporter.compute(
-                        arch_digest,
-                        code_digest,
-                        arch_judge_output=arch_judge_output,
-                        pipeline_scorecard=scorecard,
-                    )
-                    quality_reporter.write(quality_scorecard)
-                    results["quality_scorecard"] = quality_scorecard.to_dict()
-                except Exception as exc:
-                    logger.warning("Quality scoring failed: %s", exc, exc_info=True)
-                    results["quality_scorecard"] = {"error": str(exc)}
-
-        # Final report
-        from spec_manager.evaluation.report import FinalReportGenerator
-
-        report_gen = FinalReportGenerator(
-            workspace_root=self.manager.workspace_path,
-            run_id=self.manager.run_id,
-        )
-        report_path, scorecard_json_path = report_gen.generate(results, scorecard)
-        results["final_report_path"] = str(report_path)
-        results["scorecard_json_path"] = str(scorecard_json_path)
-        results["run_summary_path"] = self._run_report_relpath("run_summary.json")
-        try:
-            from spec_manager.evaluation.snapshot import snapshot_run
-
-            snapshot_run(
-                self.manager.structure.root,
-                self.manager.run_id,
-                spec_hash=spec_hash_for_snapshot,
-                pipeline_git_sha=git_sha,
-                producer_model_id=producer_model_id,
-                judge_model_id=judge_model_id,
-            )
-        except Exception as exc:
-            logger.warning("Snapshot refresh failed: %s", exc)
-
-        # Final whole-run governance gate
-        final_governance = self._run_governance_check(
-            "final",
-            check_artifacts=True,
-            check_report=True,
-        )
-        results["final_governance"] = final_governance
-        if not final_governance.get("passed", True):
-            logger.error(
-                "Final governance gate failed: %s",
-                final_governance.get("error", ""),
-            )
-            final_ticket = self._emit_governance_failure_ticket(
-                gate="FINAL_GOVERNANCE",
-                layer="L3",
-                diagnosis=str(final_governance.get("error") or "Final governance gate failed"),
-                evidence_refs=[
-                    self._run_report_relpath("final_report.md"),
-                    self._run_report_relpath("scorecard.json"),
-                    self._run_report_relpath("run_summary.json"),
-                ],
-            )
-            results["final_governance_ticket"] = final_ticket
-            results["release_blocked"] = True
-            results["release_blocked_reason"] = "Final governance gate failed"
-            state_mgr.update_state(phase="blocked_final_governance")
-            return results
-
-        # Release signoff (auto-approve in auto mode)
-        results["release_signoff"] = self._request_release_signoff(results)
-        if str((results["release_signoff"] or {}).get("status", "")).upper() == "WAITING":
-            results["pipeline_pass_history"].append(
-                {
-                    "pass": pipeline_pass,
-                    "status": "waiting",
-                    "reason": "Release signoff waiting for planner-recorded answer",
-                }
-            )
-            results["awaiting_checkpoint"] = "release_signoff"
-            results["waiting"] = True
-            state_mgr.update_state(phase="waiting_release_signoff")
-            return results
-        if not bool((results["release_signoff"] or {}).get("approved", False)):
-            results["release_blocked"] = True
-            release_reason = str((results["release_signoff"] or {}).get("reason", "")).strip()
-            results["release_blocked_reason"] = release_reason or "Release signoff rejected"
-            state_mgr.update_state(phase="blocked_release_signoff")
-            return results
-
-        # Re-render final report after release signoff so L3 decision appears
-        # in the consolidated approval checkpoint section.
-        report_path, scorecard_json_path = report_gen.generate(results, scorecard)
-        results["final_report_path"] = str(report_path)
-        results["scorecard_json_path"] = str(scorecard_json_path)
-        results["run_summary_path"] = self._run_report_relpath("run_summary.json")
-        try:
-            from spec_manager.evaluation.snapshot import snapshot_run
-
-            snapshot_run(
-                self.manager.structure.root,
-                self.manager.run_id,
-                spec_hash=spec_hash_for_snapshot,
-                pipeline_git_sha=git_sha,
-                producer_model_id=producer_model_id,
-                judge_model_id=judge_model_id,
-            )
-        except Exception as exc:
-            logger.warning("Snapshot refresh failed: %s", exc)
-
-        results["merge_tag"] = self._perform_release_merge_and_tag()
-        merge_tag = results["merge_tag"]
-        merged_to_main = bool(merge_tag.get("merged", False))
-        released_via_branch = bool(merge_tag.get("release_branch_created", False)) and bool(
-            merge_tag.get("tagged", False)
-        )
-        if not (merged_to_main or released_via_branch):
-            results["release_blocked"] = True
-            err = merge_tag.get("merge_error") or merge_tag.get("tag_error")
-            results["release_blocked_reason"] = "Merge/tag action failed: " + str(err)
-            state_mgr.update_state(phase="blocked_merge_tag")
-            return results
-
+        results["global_termination"] = {
+            "passed": True,
+            "phase": "quality",
+            "reason": None,
+        }
+        state_mgr.update_state(phase="done", blocked_reason=None)
         self._record_git_tag(f"pdd/{self.manager.run_id}/final")
-
-        state_mgr.update_state(phase="done")
-
-        # Cleanup worktrees
         if self.worktree_manager:
             results["cleanup"] = self.worktree_manager.cleanup()
-
         return results
 
     def qa(self) -> dict[str, Any]:
@@ -1400,6 +1249,9 @@ class PddLifecycle:
         evidence_ref: str,
     ) -> list[Any]:
         """Convert QA gate failures into DemotionTickets."""
+        # IMPL(single-layer): QA failure routing should emit phase-scoped escalation/work
+        # items (`phase`, `shape_id`, verifier evidence) instead of layer-targeted
+        # DemotionTicket hop traces.
         from spec_manager.orchestration.demotion import DemotionTicket
 
         failures: list[dict[str, Any]] = []
@@ -1503,6 +1355,9 @@ class PddLifecycle:
             affected_layers: set[Layer] = set()
             for ticket in tickets:
                 file_hint = ticket.failing_files[0] if ticket.failing_files else ""
+                # IMPL(single-layer): QA remediation should queue/escalate and then block
+                # on unresolved outcomes; this patch-apply demotion path is removed once
+                # demotion manager migrates to phase-local escalation semantics.
                 apply_result = demotion_manager.apply(
                     ticket,
                     slice_root=self._resolve_demotion_slice_root(file_hint),
@@ -1635,6 +1490,9 @@ class PddLifecycle:
         self, layer: Layer, layer_result: dict[str, Any]
     ) -> dict[str, Any]:
         """Evaluate SEC-039 layer-complete conditions."""
+        # IMPL(single-layer): Replace layer completion checks with phase convergence from
+        # run_state (`skeleton_non_draft`, phase verifiers pass, no open work items,
+        # within bounds) and stop reading demotion pending counts as authority.
         rows = self._layer_slice_rows(layer_result)
         non_terminal = [
             row.get("slice_id", "?")
@@ -1711,6 +1569,9 @@ class PddLifecycle:
 
     def _run_global_lineage_check(self, *, source_root: Path | None = None) -> dict[str, Any]:
         """Run global P7 lineage completeness check over clean-root code."""
+        # IMPL(single-layer): Remove pin-registry ingestion from convergence checks;
+        # lineage/drift evidence must come from deterministic dependency scan + shape
+        # ownership inputs routed through `projection.lineage.builder`.
         from spec_manager.projection.lineage.builder import (
             AtomDefinition,
             LineageBuilder,
@@ -1933,6 +1794,9 @@ class PddLifecycle:
 
     def _evaluate_global_termination(self, results: dict[str, Any]) -> dict[str, Any]:
         """Evaluate SEC-039 global termination preconditions."""
+        # IMPL(single-layer): Global termination should be evaluated immediately after
+        # Quality phase convergence; remove dependency on full L1/L2/L3 layer matrix
+        # success across pipeline retries.
         has_strict_layer_data = all(
             isinstance((results.get(layer, {}) or {}).get("layer_termination"), dict)
             and bool((results.get(layer, {}) or {}).get("layer_termination"))
@@ -2103,6 +1967,9 @@ class PddLifecycle:
         Returns:
             Dict with entry_refinement, slices, and exit_refinement results.
         """
+        # IMPL(single-layer): Migrate this API to `_run_phase(phase: PhaseId)` and model
+        # each phase as skeleton draft -> PromotionLoop work -> skeleton non-draft, with
+        # convergence/blocking computed phase-locally.
         logger.info("=== Layer %s: START ===", layer.upper())
         results: dict[str, Any] = {"layer": layer}
         lifecycle_mode = _LAYER_LIFECYCLE_MODE.get(layer, "build")
@@ -2118,6 +1985,9 @@ class PddLifecycle:
             current_layer=layer,
             tickets=entry_tickets,
         )
+        # IMPL(single-layer): Replace lower-layer demotion pauses with explicit
+        # out-of-authority BLOCK outcomes carrying diagnostics; no rerouting to earlier
+        # phases is allowed in forward-only execution.
         if lower_targets:
             results["demotion_pause"] = {
                 "paused": True,
@@ -2192,6 +2062,9 @@ class PddLifecycle:
         Returns:
             Transition results including refinement and optional rework.
         """
+        # IMPL(single-layer): Inter-layer transition/demotion rework loops are removed.
+        # Boundary checks become phase-entry validation that can PASS or BLOCK only,
+        # without backtracking or lower-layer rework rounds.
         logger.info("=== Transition %s → %s ===", from_layer.upper(), to_layer.upper())
         results: dict[str, Any] = {"from": from_layer, "to": to_layer}
 
@@ -2650,6 +2523,9 @@ class PddLifecycle:
         note: str,
     ) -> dict[str, Any]:
         """Persist a DemotionTicket artifact without applying edits in-place."""
+        # IMPL(single-layer): Migrate persisted ticket schema to phase-local escalation
+        # artifacts (`phase`, `shape_id`, `required_change_type`, `status`,
+        # `blocked_reason`) while keeping append-only ledger behavior.
         tickets_dir = self._demotion_tickets_dir()
         tickets_dir.mkdir(parents=True, exist_ok=True)
         ticket.apply_status = "PENDING"
@@ -3306,6 +3182,9 @@ class PddLifecycle:
         Returns:
             Dict with per-slice results.
         """
+        # IMPL(single-layer): Scheduler entrypoint should accept `phase: PhaseId` and
+        # phase-local bounds from RunState (iterations/work-items/stagnation), not
+        # `layer` + `lifecycle_mode`.
         from spec_manager.orchestration.promotion_loop import (
             PromotionLoop,
             RunContext,
@@ -3363,7 +3242,15 @@ class PddLifecycle:
 
         # Run PromotionLoop via scheduler
         run_context_config = self._build_run_context_config()
+        active_phase = _LAYER_TO_PHASE[layer]
+        for ref in slice_refs:
+            ref.active_phase = active_phase
+            if not isinstance(ref.metadata, dict):
+                ref.metadata = {}
+            ref.metadata["phase"] = active_phase
         if slice_focus_targets:
+            # IMPL(single-layer): Focus targets should carry shape/verifier identifiers;
+            # retire pin/atom-oriented anchors with pin retirement.
             run_context_config = {
                 **run_context_config,
                 "slice_focus_targets": {
@@ -3383,6 +3270,11 @@ class PddLifecycle:
             mode="auto" if self.mode != "interactive" else "interactive",
             lifecycle_mode=lifecycle_mode,
             workspace_root=str(self.manager.workspace_path),
+            max_iterations=self.lifecycle_config.max_iterations_per_slice,
+            max_iterations_by_phase={
+                phase_id: self.lifecycle_config.max_iterations_per_slice
+                for phase_id in _PHASE_SEQUENCE
+            },
             config=run_context_config,
         )
 
@@ -3685,6 +3577,8 @@ class PddLifecycle:
             Tuple of
             ``(monitor_executor, wake_queue, work_item_store, wait_graph, on_constraint_saved)``.
         """
+        # IMPL(single-layer): Persisted wake/monitor payloads should use forward-only
+        # phase ids so coordination schemas match run_state/work-item phase semantics.
         from spec_manager.orchestration.coordination.monitor_executor import (
             ConditionChecker,
             MonitorExecutor,
@@ -3733,7 +3627,7 @@ class PddLifecycle:
                     WakeEvent(
                         signal_id=edge.signal_id,
                         slice_id=edge.waiting_slice,
-                        layer=str(layer),
+                        layer=str(_LAYER_TO_PHASE[layer]),
                         reason="constraint_saved",
                         artifact_key=artifact_key,
                         wake_payload=wake_payload,
@@ -4633,6 +4527,9 @@ class PddLifecycle:
         Returns:
             Architecture refinement results including demotion tickets.
         """
+        # IMPL(single-layer): Architecture findings that require library-boundary/store
+        # ownership changes should emit BLOCK diagnostics/escalations, not `target_layer`
+        # demotions; in-authority findings stay in architecture-phase work items.
         logger.info("=== Architectural Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
@@ -4812,6 +4709,9 @@ class PddLifecycle:
         Returns:
             Code quality refinement results including demotion tickets.
         """
+        # IMPL(single-layer): Quality phase should emit refactor-only remediation within
+        # phase authority; behavior/architecture changes become blocked escalations, not
+        # demotions to lower layers.
         logger.info("=== Code Quality Refinement ===")
 
         from spec_manager.core.agent_utils import run_agent
