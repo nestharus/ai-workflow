@@ -81,11 +81,13 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from spec_manager.compliance.promotion.config import PhaseId
 from spec_manager.core.agent_utils import run_agent
 from spec_manager.core.json_extraction import _extract_json_payload
 from spec_manager.refinement.workspace.manager import WorkspaceManager
@@ -107,6 +109,47 @@ PDD_PHASE_ORDER: list[Phase] = [
     Phase.IMPLEMENTATION,
     Phase.CONTINUOUS_QA,
 ]
+_FORWARD_PHASE_ORDER: tuple[PhaseId, PhaseId, PhaseId] = ("libraries", "architecture", "quality")
+
+
+@dataclass(slots=True)
+class DraftShape:
+    library_id: str
+    ownership_paths: list[str]
+    declared_dependencies: list[str]
+    initial_contracts: list[str]
+
+
+@dataclass(slots=True)
+class AlgorithmEntry:
+    name: str
+    owning_library: str
+    entrypoints: list[str]
+    required_invariants: list[str]
+
+
+@dataclass(slots=True)
+class StoreEntry:
+    store_id: str
+    owning_library: str
+    access_boundaries: list[str]
+    required_adapters: list[str]
+
+
+@dataclass(slots=True)
+class BootstrapOutput:
+    draft_shapes: list[DraftShape]
+    algorithm_inventory: list[AlgorithmEntry]
+    store_inventory: list[StoreEntry]
+    libraries_seed_inputs: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "draft_shapes": [asdict(item) for item in self.draft_shapes],
+            "algorithm_inventory": [asdict(item) for item in self.algorithm_inventory],
+            "store_inventory": [asdict(item) for item in self.store_inventory],
+            "libraries_seed_inputs": dict(self.libraries_seed_inputs),
+        }
 
 
 class PromotionLoopRunner:
@@ -242,15 +285,18 @@ class PddOrchestrator:
             mode: Execution mode. Only ``"loop"`` is supported.
 
         Returns:
-            Loop summary dict from :meth:`run_loop`.
+            Forward-only lifecycle summary.
         """
+        # IMPL(single-layer): Keep this as the forward-only orchestration entrypoint;
+        # reject legacy sequential controls with explicit unsupported-path errors
+        # (proposal Section 9.1/9.3, simplification Section 12.1).
         if start_phase is not None or end_phase is not None or stop_on_failure is not True:
             raise ValueError("Direct phase sequencing arguments are retired; use run(mode='loop').")
         if mode != "loop":
             raise ValueError(
                 "PddOrchestrator sequential pipeline mode has been retired; use mode='loop'."
             )
-        return self.run_loop()
+        return self._run_forward_only_lifecycle()
 
     def run_phase(self, pdd_phase: Phase) -> dict[str, Any]:
         """Compatibility shim for direct phase execution.
@@ -258,6 +304,8 @@ class PddOrchestrator:
         Direct execution is intentionally limited to Phase 0 intake.
         All iterative work must run through :meth:`run_loop`.
         """
+        # IMPL(single-layer): Direct phase entrypoints outside Phase 0 stay unsupported;
+        # callers should route iterative work through lifecycle/loop orchestration.
         if pdd_phase != Phase.EXTRACTION:
             raise ValueError(
                 "Direct non-extraction phase execution is retired; use run(mode='loop')."
@@ -266,6 +314,9 @@ class PddOrchestrator:
         self.manager.start_phase(pdd_phase)
         try:
             outputs = runner()
+            # IMPL(single-layer): Extraction output contract should carry bootstrap
+            # inventories (draft shapes, algorithm inventory, store inventory) for
+            # Libraries-phase seeding (proposal Section 9.4).
             refinement_output = self._post_phase_refinement_hook(pdd_phase)
             if refinement_output:
                 outputs["refinement"] = refinement_output
@@ -275,6 +326,92 @@ class PddOrchestrator:
         except Exception as exc:
             self.manager.fail_phase(pdd_phase, error=str(exc))
             raise
+
+    def run_intake_only(self) -> dict[str, Any]:
+        """Run Phase 0 intake/extraction only."""
+        return self.run_phase(Phase.EXTRACTION)
+
+    def bootstrap_single_layer(
+        self,
+        *,
+        phase0_output_dir: Path | None = None,
+        intake_artifacts: dict[str, Any] | None = None,
+    ) -> BootstrapOutput:
+        """Build single-layer bootstrap artifacts from Phase 0 output."""
+        from spec_manager.routing.shapes import load_shape_pack, write_shape_index
+
+        output_dir = phase0_output_dir or (self.manager.workspace_path / "phase0_output")
+        if not output_dir.exists():
+            raise ValueError(f"Phase 0 output directory not found: {output_dir}")
+
+        route_rows = self._load_route_table_rows(output_dir / "route_table.jsonl")
+        library_meta = self._load_library_metadata(output_dir / "libraries.yaml")
+
+        draft_shapes = self._build_draft_shapes(
+            output_dir=output_dir,
+            route_rows=route_rows,
+            library_meta=library_meta,
+        )
+        algorithm_inventory = self._build_algorithm_inventory(route_rows)
+        store_inventory = self._build_store_inventory(route_rows)
+        if not draft_shapes:
+            raise ValueError(
+                "Single-layer bootstrap failed: no draft shapes were derived from Phase 0 output."
+            )
+
+        self._write_bootstrap_shape_documents(draft_shapes, library_meta=library_meta)
+        shape_index = load_shape_pack(self.manager.workspace_path)
+        index_md_path, index_json_path = write_shape_index(shape_index)
+        shape_artifacts = self._snapshot_shape_index_into_phase0_output(
+            output_dir=output_dir,
+            index_md_path=index_md_path,
+            index_json_path=index_json_path,
+        )
+        verifier_refresh_shape_ids = sorted(
+            str(shape_id)
+            for shape_id, shape in shape_index.shapes.items()
+            if bool(getattr(shape, "requires_verifier_refresh", False))
+        )
+
+        active_phase: PhaseId = "libraries"
+        libraries_seed_inputs: dict[str, Any] = {
+            "active_phase": active_phase,
+            "phase_order": list(_FORWARD_PHASE_ORDER),
+            "phase0_output_dir": str(output_dir),
+            "route_table_path": str(output_dir / "route_table.jsonl"),
+            "libraries_yaml_path": str(output_dir / "libraries.yaml"),
+            "draft_shape_ids": sorted(str(shape_id) for shape_id in shape_index.shapes),
+            "shape_index_paths": {
+                "index_markdown": str(index_md_path),
+                "index_json": str(index_json_path),
+                "phase0_index_markdown": str(shape_artifacts["index_markdown"]),
+                "phase0_index_json": str(shape_artifacts["index_json"]),
+            },
+            "shape_index_diagnostics": list(shape_index.diagnostics),
+            "verifier_refresh_shape_ids": verifier_refresh_shape_ids,
+            # IMPL(single-layer): Libraries may start with proposal-only shapes from
+            # bootstrap; this payload is the first-cycle verifier refresh work-item seed.
+            "requires_verifier_refresh": bool(verifier_refresh_shape_ids),
+            "intake_artifacts": dict(intake_artifacts or {}),
+        }
+
+        bootstrap = BootstrapOutput(
+            draft_shapes=draft_shapes,
+            algorithm_inventory=algorithm_inventory,
+            store_inventory=store_inventory,
+            libraries_seed_inputs=libraries_seed_inputs,
+        )
+        bootstrap_payload = bootstrap.to_dict()
+        bootstrap_artifact = output_dir / "bootstrap_single_layer.json"
+        bootstrap_artifact.write_text(
+            json.dumps(bootstrap_payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        shutil.copy2(
+            bootstrap_artifact,
+            self.manager.structure.root / "bootstrap_single_layer.json",
+        )
+        return bootstrap
 
     def install_phase0_output(self, phase0_dir: Path) -> None:
         """Install precomputed Phase 0 artifacts into workspace structure."""
@@ -312,6 +449,9 @@ class PddOrchestrator:
             SliceRef,
         )
 
+        # IMPL(single-layer): This loop path is transitional until orchestration
+        # delegates to phase-native lifecycle execution; keep outputs aligned with
+        # forward-only phase semantics while layer-era fields are retired.
         results: dict[str, Any] = {"mode": "loop"}
 
         # 1. Run Phase 0 only when external intake contains queued items.
@@ -330,6 +470,9 @@ class PddOrchestrator:
             routing_items: list[RoutingItem] = list(queued_items)
             if routing_items:
                 patches = route_items(routing_items, self.manager.workspace_path)
+                # IMPL(single-layer): Route-items mode still needs a deterministic
+                # shape/bootstrap refresh so matcher/router/lifecycle consumers do not
+                # run on stale routing index artifacts.
                 results["intake_routed"] = len(patches)
                 results["extraction"] = "skipped (route-items mode)"
                 quality_report, remediation = self._run_library_quality_gate(
@@ -340,6 +483,11 @@ class PddOrchestrator:
                 results["library_quality_passed"] = quality_report.gate_passed
                 if remediation:
                     results["library_quality_remediation"] = remediation
+                bootstrap = self.bootstrap_single_layer(
+                    phase0_output_dir=self.manager.workspace_path / "phase0_output",
+                    intake_artifacts={"intake_routed": len(patches)},
+                )
+                results["bootstrap"] = bootstrap.to_dict()
             elif run_extraction:
                 extraction_result = self.run_phase(Phase.EXTRACTION)
                 results["extraction"] = extraction_result
@@ -355,6 +503,9 @@ class PddOrchestrator:
         if libraries_dir.exists():
             for lib_dir in sorted(libraries_dir.iterdir()):
                 if lib_dir.is_dir():
+                    # IMPL(single-layer): Replace `SliceRef.layer="l1"` with
+                    # phase-native identity once PromotionLoop/Scheduler contracts
+                    # fully migrate from layer vocabulary.
                     slice_refs.append(
                         SliceRef(
                             slice_id=lib_dir.name,
@@ -369,6 +520,8 @@ class PddOrchestrator:
             return results
 
         # 3. Run PromotionLoop on discovered slices (via scheduler)
+        # IMPL(single-layer): RunContext should carry phase + phase-local iteration
+        # bounds rather than lifecycle_mode/layer aliases after API migration.
         run_context = RunContext(
             run_id=self.manager.run_id,
             mode="auto",
@@ -386,6 +539,8 @@ class PddOrchestrator:
                 "status": r.status,
                 "iterations": r.iterations,
                 "remaining_gaps": r.remaining_gaps,
+                # IMPL(single-layer): Replace demotion-era rollups with phase-local
+                # work-item escalation/block diagnostics (no layer backtracking).
                 "demotion_count": len(r.demotion_tickets),
             }
             for r in slice_results
@@ -398,6 +553,339 @@ class PddOrchestrator:
 
         results["all_complete"] = all_complete
         return results
+
+    def _run_forward_only_lifecycle(self) -> dict[str, Any]:
+        from spec_manager.orchestration.pdd_lifecycle import PddLifecycle
+
+        lifecycle = PddLifecycle(self.manager)
+        return lifecycle.run()
+
+    @staticmethod
+    def _load_route_table_rows(route_table_path: Path) -> list[dict[str, Any]]:
+        if not route_table_path.exists():
+            return []
+
+        rows: list[dict[str, Any]] = []
+        lines = route_table_path.read_text(encoding="utf-8").splitlines()
+        for line_no, raw in enumerate(lines, start=1):
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid route_table.jsonl line {line_no}: {exc}"
+                ) from exc
+            if isinstance(payload, dict):
+                rows.append(payload)
+        return rows
+
+    @staticmethod
+    def _load_library_metadata(libraries_yaml_path: Path) -> dict[str, dict[str, str]]:
+        if not libraries_yaml_path.exists():
+            return {}
+        try:
+            payload = yaml.safe_load(libraries_yaml_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Failed to parse libraries.yaml: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            return {}
+        libraries = payload.get("libraries", [])
+        if not isinstance(libraries, list):
+            return {}
+
+        metadata: dict[str, dict[str, str]] = {}
+        for row in libraries:
+            if not isinstance(row, dict):
+                continue
+            lib_id = str(row.get("lib_id", "")).strip()
+            if not lib_id:
+                continue
+            metadata[lib_id] = {
+                "name": str(row.get("name", "")).strip(),
+                "description": str(row.get("description", "")).strip(),
+            }
+        return metadata
+
+    @staticmethod
+    def _route_library_id(route_row: dict[str, Any]) -> str:
+        dest = route_row.get("dest", {})
+        if isinstance(dest, dict):
+            explicit = str(dest.get("library") or dest.get("destination") or "").strip()
+            if explicit:
+                return explicit
+        return str(route_row.get("library", "")).strip()
+
+    @staticmethod
+    def _route_bucket(route_row: dict[str, Any]) -> str:
+        dest = route_row.get("dest", {})
+        if isinstance(dest, dict):
+            return str(dest.get("bucket", "")).strip()
+        return str(route_row.get("bucket", "")).strip()
+
+    @staticmethod
+    def _route_element_id(route_row: dict[str, Any]) -> str:
+        dest = route_row.get("dest", {})
+        if isinstance(dest, dict):
+            return str(dest.get("element_id", "")).strip()
+        return str(route_row.get("element_id", "")).strip()
+
+    @staticmethod
+    def _route_span_ref(route_row: dict[str, Any]) -> str:
+        src = route_row.get("src", {})
+        if not isinstance(src, dict):
+            return ""
+        src_file = str(src.get("file", "")).strip()
+        start = src.get("start")
+        end = src.get("end")
+        if src_file and isinstance(start, int) and isinstance(end, int):
+            return f"{src_file}:{start}-{end}"
+        return src_file
+
+    def _build_draft_shapes(
+        self,
+        *,
+        output_dir: Path,
+        route_rows: list[dict[str, Any]],
+        library_meta: dict[str, dict[str, str]],
+    ) -> list[DraftShape]:
+        phase0_libraries_dir = output_dir / "libraries"
+        library_ids: set[str] = set(library_meta)
+        if phase0_libraries_dir.exists():
+            library_ids.update(
+                lib_dir.name
+                for lib_dir in phase0_libraries_dir.iterdir()
+                if lib_dir.is_dir()
+            )
+
+        route_id_to_library: dict[str, str] = {}
+        for row in route_rows:
+            route_id = str(row.get("route_id", "")).strip()
+            lib_id = self._route_library_id(row)
+            if route_id and lib_id:
+                route_id_to_library[route_id] = lib_id
+                library_ids.add(lib_id)
+
+        drafts: list[DraftShape] = []
+        for lib_id in sorted(lib for lib in library_ids if lib):
+            ownership_paths: set[str] = {f"libraries/{lib_id}"}
+            declared_dependencies: set[str] = set()
+            initial_contracts: set[str] = set()
+
+            for row in route_rows:
+                if self._route_library_id(row) != lib_id:
+                    continue
+                src = row.get("src", {})
+                if isinstance(src, dict):
+                    src_file = str(src.get("file", "")).strip().replace("\\", "/")
+                    if src_file:
+                        ownership_paths.add(src_file)
+
+                for resolved in row.get("resolved_refs", []):
+                    if not isinstance(resolved, dict):
+                        continue
+                    target_route_id = str(resolved.get("target_route_id", "")).strip()
+                    target_library = route_id_to_library.get(target_route_id, "")
+                    if target_library and target_library != lib_id:
+                        declared_dependencies.add(target_library)
+
+                bucket = self._route_bucket(row)
+                element_id = self._route_element_id(row)
+                if bucket in {"CONSTRAINTS", "DETAIL/SHAPE"} and element_id:
+                    initial_contracts.add(element_id)
+
+            installed_library_dir = self.manager.structure.libraries_dir / lib_id
+            if installed_library_dir.exists():
+                for file_path in installed_library_dir.rglob("*"):
+                    if file_path.is_file():
+                        rel = file_path.relative_to(self.manager.structure.root).as_posix()
+                        ownership_paths.add(rel)
+
+            drafts.append(
+                DraftShape(
+                    library_id=lib_id,
+                    ownership_paths=sorted(ownership_paths),
+                    declared_dependencies=sorted(declared_dependencies),
+                    initial_contracts=sorted(initial_contracts),
+                )
+            )
+        return drafts
+
+    def _build_algorithm_inventory(self, route_rows: list[dict[str, Any]]) -> list[AlgorithmEntry]:
+        route_lookup: dict[str, dict[str, Any]] = {
+            str(row.get("route_id", "")).strip(): row for row in route_rows if isinstance(row, dict)
+        }
+        aggregate: dict[tuple[str, str], dict[str, set[str]]] = {}
+
+        for row in route_rows:
+            lib_id = self._route_library_id(row)
+            if not lib_id or self._route_bucket(row) != "DETAIL/ALGORITHM":
+                continue
+
+            name = self._route_element_id(row) or str(row.get("route_id", "")).strip()
+            if not name:
+                continue
+            key = (lib_id, name)
+            payload = aggregate.setdefault(
+                key,
+                {"entrypoints": set(), "required_invariants": set()},
+            )
+            span_ref = self._route_span_ref(row)
+            if span_ref:
+                payload["entrypoints"].add(span_ref)
+
+            for resolved in row.get("resolved_refs", []):
+                if not isinstance(resolved, dict):
+                    continue
+                target_route_id = str(resolved.get("target_route_id", "")).strip()
+                target = route_lookup.get(target_route_id)
+                if not target:
+                    continue
+                target_bucket = self._route_bucket(target)
+                target_element = self._route_element_id(target)
+                if target_bucket in {"CONSTRAINTS", "DETAIL/SHAPE"} and target_element:
+                    payload["required_invariants"].add(target_element)
+
+            for unresolved in row.get("unresolved_refs", []):
+                if not isinstance(unresolved, dict):
+                    continue
+                reason = str(unresolved.get("reason", "")).strip()
+                if reason:
+                    payload["required_invariants"].add(f"unresolved:{reason}")
+
+        return [
+            AlgorithmEntry(
+                name=name,
+                owning_library=lib_id,
+                entrypoints=sorted(values["entrypoints"]),
+                required_invariants=sorted(values["required_invariants"]),
+            )
+            for (lib_id, name), values in sorted(aggregate.items(), key=lambda item: item[0])
+        ]
+
+    def _build_store_inventory(self, route_rows: list[dict[str, Any]]) -> list[StoreEntry]:
+        route_lookup: dict[str, dict[str, Any]] = {
+            str(row.get("route_id", "")).strip(): row for row in route_rows if isinstance(row, dict)
+        }
+        aggregate: dict[tuple[str, str], dict[str, set[str]]] = {}
+
+        for row in route_rows:
+            lib_id = self._route_library_id(row)
+            if not lib_id or self._route_bucket(row) != "DETAIL/STORE":
+                continue
+
+            store_id = self._route_element_id(row) or str(row.get("route_id", "")).strip()
+            if not store_id:
+                continue
+            key = (lib_id, store_id)
+            payload = aggregate.setdefault(
+                key,
+                {"access_boundaries": set(), "required_adapters": set()},
+            )
+            span_ref = self._route_span_ref(row)
+            if span_ref:
+                payload["access_boundaries"].add(span_ref)
+
+            for resolved in row.get("resolved_refs", []):
+                if not isinstance(resolved, dict):
+                    continue
+                target_route_id = str(resolved.get("target_route_id", "")).strip()
+                target = route_lookup.get(target_route_id)
+                if not target:
+                    continue
+                target_bucket = self._route_bucket(target)
+                target_element = self._route_element_id(target)
+                if target_bucket in {"DETAIL/ALGORITHM", "DETAIL/SHAPE"} and target_element:
+                    payload["required_adapters"].add(target_element)
+
+            for unresolved in row.get("unresolved_refs", []):
+                if not isinstance(unresolved, dict):
+                    continue
+                reason = str(unresolved.get("reason", "")).strip()
+                if reason:
+                    payload["required_adapters"].add(f"unresolved:{reason}")
+
+        return [
+            StoreEntry(
+                store_id=store_id,
+                owning_library=lib_id,
+                access_boundaries=sorted(values["access_boundaries"]),
+                required_adapters=sorted(values["required_adapters"]),
+            )
+            for (lib_id, store_id), values in sorted(aggregate.items(), key=lambda item: item[0])
+        ]
+
+    def _write_bootstrap_shape_documents(
+        self,
+        draft_shapes: list[DraftShape],
+        *,
+        library_meta: dict[str, dict[str, str]],
+    ) -> None:
+        run_shapes_dir = self.manager.workspace_path / "workspace" / "routing"
+        run_shapes_dir.mkdir(parents=True, exist_ok=True)
+
+        for draft in sorted(draft_shapes, key=lambda item: item.library_id):
+            package = f"libraries/{draft.library_id}"
+            meta = library_meta.get(draft.library_id, {})
+            role = str(meta.get("name") or draft.library_id).strip() or draft.library_id
+            file_name = draft.library_id.strip().replace("/", "-").replace("\\", "-").lower()
+            target = run_shapes_dir / f"{file_name}.md"
+            files_line = ", ".join(sorted(set(draft.ownership_paths)))
+
+            lines = [
+                "Classification: library",
+                f"Package: {package}",
+                f"Files: {files_line}",
+                f"Role: {role}",
+                "",
+                "## Systems",
+                "- phase0-bootstrap",
+                "",
+                "## Surface API",
+                "",
+                "## Dependencies",
+            ]
+            lines.extend(f"- {dependency}" for dependency in draft.declared_dependencies)
+            lines.extend(
+                [
+                    "",
+                    "## Consumers",
+                    "",
+                    "## Verifiers",
+                    "",
+                    "## Contracts",
+                ]
+            )
+            for contract_id in draft.initial_contracts:
+                lines.extend(
+                    [
+                        f"### CUSTOM: {contract_id}",
+                        f"contract_id: {contract_id}",
+                        "kind: CUSTOM",
+                        "consumer_shape_ids: []",
+                        "verifier_ids: []",
+                        "",
+                    ]
+                )
+
+            target.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+    def _snapshot_shape_index_into_phase0_output(
+        self,
+        *,
+        output_dir: Path,
+        index_md_path: Path,
+        index_json_path: Path,
+    ) -> dict[str, Path]:
+        routing_dir = output_dir / "routing"
+        routing_dir.mkdir(parents=True, exist_ok=True)
+        dest_md = routing_dir / "INDEX.md"
+        dest_json = routing_dir / "index.json"
+        shutil.copy2(index_md_path, dest_md)
+        shutil.copy2(index_json_path, dest_json)
+        return {"index_markdown": dest_md, "index_json": dest_json}
 
     # ------------------------------------------------------------------
     # Phase runners
@@ -425,6 +913,9 @@ class PddOrchestrator:
         source_dir = self.manager.structure.spec_snapshot_dir
         output_dir = self.manager.workspace_path / "phase0_output"
         result = run_phase0(source_dir, output_dir)
+        # IMPL(single-layer): Phase 0 should materialize run-scoped bootstrap
+        # artifacts (shape index + algorithm/store inventories + Libraries seed data)
+        # before iterative phase execution begins.
 
         # Install Phase 0 output into workspace structure
         self._install_phase0_output(output_dir)
@@ -439,6 +930,17 @@ class PddOrchestrator:
         if remediation:
             result["library_quality_remediation"] = remediation
 
+        try:
+            bootstrap_output = self.bootstrap_single_layer(
+                phase0_output_dir=output_dir,
+                intake_artifacts=result,
+            )
+        except Exception as exc:
+            # IMPL(single-layer): bootstrap shape/inventory failure must block entry
+            # into Libraries with explicit diagnostics.
+            raise ValueError(f"Phase 0 bootstrap generation failed: {exc}") from exc
+        result["bootstrap"] = bootstrap_output.to_dict()
+
         return result
 
     def _install_phase0_output(self, phase0_dir: Path) -> None:
@@ -449,6 +951,9 @@ class PddOrchestrator:
         downstream phases look for content. This bridge copies the output
         into those locations.
         """
+        # IMPL(single-layer): Install step should include shape-pack artifacts
+        # (`routing/INDEX.md`, `routing/index.json`) and bootstrap inventory payloads
+        # in addition to libraries/summaries.
         # Install assembled library directories
         phase0_libs = phase0_dir / "libraries"
         history_root = (
@@ -478,6 +983,8 @@ class PddOrchestrator:
         # Install libraries.yaml (library definitions with names)
         libraries_yaml = phase0_dir / "libraries.yaml"
         if libraries_yaml.exists():
+            # IMPL(single-layer): Keep `libraries.yaml` as transitional input while
+            # lifecycle bootstrap shifts to shape/index + inventory contracts.
             dest = self.manager.structure.root / "libraries.yaml"
             shutil.copy2(libraries_yaml, dest)
 
@@ -486,6 +993,24 @@ class PddOrchestrator:
         if route_table.exists():
             dest = self.manager.structure.root / "route_table.jsonl"
             shutil.copy2(route_table, dest)
+
+        # Install shape index artifacts generated during bootstrap.
+        phase0_routing_dir = phase0_dir / "routing"
+        if phase0_routing_dir.exists():
+            routing_dest = self.manager.structure.root / "routing"
+            routing_dest.mkdir(parents=True, exist_ok=True)
+            for artifact_name in ("INDEX.md", "index.json"):
+                src = phase0_routing_dir / artifact_name
+                if src.exists():
+                    shutil.copy2(src, routing_dest / artifact_name)
+
+        # Install serialized bootstrap inventory output.
+        bootstrap_artifact = phase0_dir / "bootstrap_single_layer.json"
+        if bootstrap_artifact.exists():
+            shutil.copy2(
+                bootstrap_artifact,
+                self.manager.structure.root / "bootstrap_single_layer.json",
+            )
 
     @staticmethod
     def _archive_existing_path(existing: Path, *, archive_root: Path, label: str) -> Path:
@@ -517,6 +1042,8 @@ class PddOrchestrator:
         if quality_report.gate_passed:
             return quality_report, remediation
 
+        # IMPL(single-layer): Quality gate failures must block entry into Libraries
+        # phase with explicit diagnostics (proposal Section 9.4/9.6).
         logger.warning(
             "Library quality gate failed; attempting remediation for dimensions: %s",
             ", ".join(quality_report.failed_gate_dimensions),
@@ -976,6 +1503,9 @@ class PddOrchestrator:
            spans into pin/slice/store/event/adjacency artifacts and
            register routed atom candidates in the atom registry.
         """
+        # IMPL(single-layer): Legacy pin/atom discovery path; forward-only
+        # single-layer execution should bypass this phase and seed Libraries from
+        # Phase 0 draft shapes + inventories instead.
         branch_mgr = self.manager.branches
         issues = branch_mgr.initialize() if not branch_mgr.is_initialized() else []
 
@@ -1005,6 +1535,8 @@ class PddOrchestrator:
 
     def _run_spec_build(self) -> dict[str, Any]:
         """Phase 5: Build pin/edge registry from LLM outputs and run demotion-aware promotion."""
+        # IMPL(single-layer): Legacy pin-registry/demotion phase retained only for
+        # compatibility; unsupported on the single-layer lifecycle path (Section 12.1).
         import json
         from datetime import UTC, datetime
 
@@ -1176,6 +1708,9 @@ class PddOrchestrator:
 
     def _run_cross_library(self) -> dict[str, Any]:
         """Phase 6: Summarize cross-library topology from canonical bundle evidence."""
+        # IMPL(single-layer): Keep cross-library evidence deterministic, but migrate
+        # topology ownership to shape matcher + dependency scan artifacts instead of
+        # pin-graph snapshots where available.
         edge_rows: list[dict[str, Any]] = []
         nodes: set[str] = set()
         signal_type_counts: dict[str, int] = {}
@@ -1231,14 +1766,16 @@ class PddOrchestrator:
     def _run_projection_sync(self) -> dict[str, Any]:
         """Phase 7: Lineage building, analysis generation, projection sync.
 
-        1. Loads projection edges from pin registry.
-        2. Builds ``LineageBuilder`` to trace atom→architecture projection.
-        3. Runs ``generate_analysis_file()`` for the full analysis artifact.
-        4. Runs ``ProjectionGenerator.generate_plan()`` for plan.md.
-        5. Persists lineage table and analysis to disk.
+        1. Loads shape index.
+        2. Converts deterministic dependency-scan rows into lineage records.
+        3. Builds shape lineage table.
+        4. Runs ``generate_analysis_file()`` for the full analysis artifact.
+        5. Runs ``ProjectionGenerator.generate_plan()`` for plan.md.
+        6. Persists lineage table and analysis to disk.
         """
-        import json
-
+        # IMPL(single-layer): Legacy projection-sync path is transitional; lineage on
+        # the single-layer convergence path should be built from dependency scan +
+        # shape index inputs, not pin-registry projection edges.
         from spec_manager.analysis.generator import (
             AnalysisGenerationUnavailableError,
             generate_analysis_file,
@@ -1246,95 +1783,52 @@ class PddOrchestrator:
         )
         from spec_manager.projection.generator import ProjectionGenerator
         from spec_manager.projection.lineage.builder import (
-            AtomDefinition,
-            LineageBuilder,
-            import_records_from_pin_registry,
+            build_shape_lineage,
+            import_records_from_dependency_scan,
         )
         from spec_manager.projection.lineage.persistence import save_lineage_table
+        from spec_manager.routing.shapes import load_shape_pack, write_shape_index
         from spec_manager.schemas.derived_elements import DerivedElement
-        from spec_manager.schemas.pin_functions import PinFunctionRegistry
         from spec_manager.schemas.spec_index_v2 import Library
 
         root = self.manager.structure.root
         outputs: dict[str, Any] = {}
 
-        # 1. Build atom definitions from branch manager for lineage tracking.
-        branch_mgr = self.manager.branches
-        atom_defs: list[AtomDefinition] = []
-        if branch_mgr.is_initialized():
-            for atom in branch_mgr.list_atoms():
-                atom_defs.append(
-                    AtomDefinition(
-                        atom_id=atom.atom_id,
-                        function_name=atom.function_name,
-                        file_path=atom.file_path,
-                        module_path="",
-                        signature_hash=getattr(atom, "signature_hash", ""),
-                    )
-                )
+        shape_index = load_shape_pack(self.manager.workspace_path)
+        index_md_path, index_json_path = write_shape_index(shape_index)
+        outputs["shape_count"] = len(shape_index.shapes)
+        outputs["shape_index_path"] = str(index_json_path)
+        outputs["shape_index_markdown_path"] = str(index_md_path)
+        outputs["shape_index_diagnostics"] = list(shape_index.diagnostics)
 
-        # 2. Consume registry-declared projection edges.
-        import_records = []
-        registry_status = "missing"
-        stale_reason = ""
-        registry_path = root / ".spec" / "pin_registry.json"
-        if registry_path.exists():
-            stale, reason = self._pin_registry_is_stale(
-                registry_path=registry_path,
-                root=root,
-                file_hints=[atom.file_path for atom in atom_defs if atom.file_path],
-            )
-            if stale:
-                registry_status = "stale"
-                stale_reason = reason or "source changed"
-            else:
-                registry_status = "fresh"
-                try:
-                    pin_registry = PinFunctionRegistry.model_validate_json(
-                        registry_path.read_text(encoding="utf-8")
-                    )
-                    import_records = import_records_from_pin_registry(pin_registry)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to load pin registry for projection sync lineage build: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                    import_records = []
-                    registry_status = "invalid"
-
-        if not import_records:
-            outputs["lineage_input_warning"] = "No usable relationship edges from pin registry."
-            if stale_reason:
-                outputs["lineage_input_warning"] += f" Registry stale reason: {stale_reason}"
-        outputs["pin_registry_status"] = registry_status
+        dependency_scan_rows = self._collect_dependency_scan_rows(self._latest_slice_bundle_paths())
+        outputs["dependency_scan_rows"] = len(dependency_scan_rows)
+        import_records = import_records_from_dependency_scan(dependency_scan_rows, shape_index)
         outputs["import_edges"] = len(import_records)
 
-        # 3. Build lineage table (atom → architecture projection)
-        if atom_defs:
-            lineage_builder = LineageBuilder(import_records=import_records, atoms=atom_defs)
-            lineage_table = lineage_builder.build_lineage()
-            outputs["lineage_edges"] = len(lineage_table.edges)
-            outputs["lineage_rejections"] = len(lineage_builder.rejected_records)
-            if lineage_builder.rejected_records:
-                outputs["lineage_rejection_reasons"] = [
-                    rejection.reason for rejection in lineage_builder.rejected_records[:10]
-                ]
-
-            # Find orphan atoms (known but not projected)
-            known_atom_ids = {a.atom_id for a in atom_defs}
-            orphans = lineage_table.find_orphan_atoms(known_atom_ids)
-            outputs["orphan_atoms"] = len(orphans)
-
-            # Persist lineage table
-            lineage_path = root / "lineage_table.json"
-            save_lineage_table(lineage_table, lineage_path)
-            outputs["lineage_path"] = str(lineage_path)
+        lineage_table = build_shape_lineage(import_records)
+        outputs["lineage_edges"] = len(lineage_table.edges)
+        outputs["lineage_rejections"] = len(lineage_table.removed_edges)
+        if lineage_table.removed_edges:
+            rejection_reasons: list[str] = []
+            for removed in lineage_table.removed_edges:
+                reason = str(removed.get("reason", "")).strip()
+                if reason and reason not in rejection_reasons:
+                    rejection_reasons.append(reason)
+            outputs["lineage_rejection_reasons"] = rejection_reasons[:10]
         else:
-            outputs["lineage_edges"] = 0
-            outputs["orphan_atoms"] = 0
-            outputs["lineage_rejections"] = 0
-            outputs["note_lineage"] = "No atoms registered — skipping lineage build."
+            outputs["lineage_rejection_reasons"] = []
+
+        known_shape_ids = {str(shape_id) for shape_id in shape_index.shapes}
+        outputs["orphan_shapes"] = len(lineage_table.find_orphan_atoms(known_shape_ids))
+        if not import_records:
+            outputs["lineage_input_warning"] = (
+                "No deterministic dependency-scan rows were available for lineage ingestion."
+            )
+
+        lineage_path = root / "lineage_table.json"
+        save_lineage_table(lineage_table, lineage_path)
+        outputs["lineage_path"] = str(lineage_path)
 
         # 4. Generate analysis file (atom registry, imports, adjacency, data flow)
         spec_snapshot = self.manager.structure.spec_snapshot_dir
@@ -1524,6 +2018,106 @@ class PddOrchestrator:
         if not isinstance(rows, list):
             return []
         return [row for row in rows if isinstance(row, dict)]
+
+    @staticmethod
+    def _dependency_importer_file(edge: dict[str, Any]) -> str:
+        for key in ("importer_file", "src_file", "file_path", "arch_file_path", "file"):
+            value = str(edge.get(key) or "").strip()
+            if value:
+                return value.replace("\\", "/")
+        src = str(edge.get("src") or "").strip()
+        if ":" in src:
+            return src.split(":", 1)[0].replace("\\", "/")
+        return src.replace("\\", "/")
+
+    @staticmethod
+    def _dependency_imported_module(edge: dict[str, Any]) -> str:
+        for key in ("imported_module", "dst_module", "dst", "arch_location", "to"):
+            value = str(edge.get(key) or "").strip()
+            if not value:
+                continue
+            normalized = value.replace("\\", "/").strip()
+            if ":" in normalized:
+                normalized = normalized.split(":", 1)[0]
+            return normalized
+        return ""
+
+    def _collect_dependency_scan_rows(self, bundle_paths: list[Path]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, int]] = set()
+
+        for bundle_path in bundle_paths:
+            bundle_payload = self._read_json_dict(bundle_path)
+            if not bundle_payload:
+                continue
+            iteration_dir = bundle_path.parent
+            graph_snapshot = self._bundle_snapshot(
+                bundle_payload,
+                iteration_dir=iteration_dir,
+                field_chain=("graph_snapshot", "path"),
+                list_key="edges",
+            )
+            edge_rows = graph_snapshot
+            if not edge_rows:
+                facts = bundle_payload.get("facts", {})
+                if isinstance(facts, dict):
+                    edge_rows = [
+                        edge for edge in facts.get("call_graph_edges", []) if isinstance(edge, dict)
+                    ]
+
+            for edge in edge_rows:
+                importer_file = self._dependency_importer_file(edge).strip()
+                imported_module = self._dependency_imported_module(edge).strip()
+                if not importer_file or not imported_module:
+                    continue
+
+                line_no_raw = (
+                    edge.get("line_no")
+                    if edge.get("line_no") is not None
+                    else edge.get("arch_line", edge.get("line", 0))
+                )
+                try:
+                    line_no = max(int(line_no_raw), 0)
+                except (TypeError, ValueError):
+                    line_no = 0
+
+                confidence_raw = edge.get("confidence", edge.get("weight", 1.0))
+                try:
+                    confidence = float(confidence_raw)
+                except (TypeError, ValueError):
+                    confidence = 1.0
+                confidence = max(0.0, min(1.0, confidence))
+
+                dedupe_key = (importer_file, imported_module, line_no)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+
+                rows.append(
+                    {
+                        "importer_file": importer_file,
+                        "importer_shape_id": None,
+                        "imported_module": imported_module,
+                        "imported_shape_id": None,
+                        "line_no": line_no,
+                        "signal_type": "import_scan",
+                        "confidence": confidence,
+                        "details": {
+                            "edge_kind": "observed",
+                            "source_bundle": str(bundle_path),
+                            "evidence_refs": [str(bundle_path)],
+                        },
+                    }
+                )
+
+        rows.sort(
+            key=lambda row: (
+                str(row["importer_file"]),
+                str(row["imported_module"]),
+                int(row["line_no"]),
+            )
+        )
+        return rows
 
     def _collect_pin_edge_snapshot_rows(
         self,

@@ -56,6 +56,9 @@
 #   Integration points:
 #     - Called by: pdd_orchestrator for authoritative execution.
 #     - Calls: promotion_loop, routing matcher/verifiers, work_item store, monitors, compliance orchestrator.
+# IMPL(single-layer): Consume Phase 0 bootstrap contracts from
+# `PddOrchestrator.run_phase(Phase.EXTRACTION)` as required lifecycle inputs
+# (draft shapes + algorithm/store inventories + shape index) before Libraries starts.
 # IMPL(single-layer): Lifecycle-level reviewer orchestration that builds
 # `PatternLibrary` prompt sections should use the same scoped contract-template set as
 # PromotionLoop so Architecture-phase contract findings and verifier requirements are
