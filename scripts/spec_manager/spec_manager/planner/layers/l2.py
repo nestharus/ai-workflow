@@ -31,6 +31,10 @@
 # `shape_id` + `created_in_phase='architecture'` and include
 # `required_change_type`/`evidence_refs`; persistence should use
 # `WorkItemStore.create/upsert` so evidence merges stay explicit.
+# IMPL(single-layer): Keep this planner's session contract aligned with
+# `ArchitecturePlannerStrategy` migration (`phase='architecture'` gating and
+# `shape_id`/`contract_ids` decision metadata) so PLAN routing and coordination
+# payloads stay schema-compatible.
 #   Test requirements:
 #     - Emits only allowed change types for architecture phase.
 #     - Out-of-authority findings (e.g. refactor-only) produce block, not cross-phase re-route.
