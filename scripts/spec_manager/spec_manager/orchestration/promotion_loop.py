@@ -63,6 +63,10 @@
 # `phase=active_phase`, shape execution scope (shape_id + allowed files), and
 # active-phase work items; consume runner-emitted completion metadata to close
 # only the corresponding phase-local work items.
+# IMPL(single-layer): When the architecture planner returns incomplete topology
+# evidence (`discovery_status='incomplete'` / missing deterministic discovery
+# inputs), PLAN/VERIFY handling should emit phase-local BLOCK diagnostics rather
+# than demotion, retry loops, or cross-phase rerouting.
 # IMPL(single-layer): As `orchestration.demotion` shifts from `apply()` patching to
 # `escalate()` work-item persistence, remove PromotionLoop demotion-apply/commit paths
 # in the same change and consume QUEUED/BLOCKED escalation outcomes only.

@@ -37,8 +37,8 @@
 
 """L2 (architecture) layer planner.
 
-L2 routes architecture source artifacts (manifests, pin registries,
-entrypoints, wiring declarations) into a decision-point planning loop.
+L2 routes architecture source artifacts (manifests, entrypoints, wiring
+declarations) into a decision-point planning loop.
 Discovery is scoped to the current slice context rather than scanning
 the full workspace graph up front.
 
@@ -58,10 +58,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
+from spec_manager.compliance.promotion.config import PhaseId
+
 logger = logging.getLogger(__name__)
 
 # Type alias for injected tool callables (all are optional).
 _ToolFn = Callable[..., Any] | None
+_ARCHITECTURE_PHASE: PhaseId = "architecture"
+_ALLOWED_ARCH_CHANGE_TYPES = frozenset({"wiring_only", "spec_change", "behavior_change"})
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -103,8 +107,6 @@ def _estimate_touched_files(gaps: list[dict[str, Any]]) -> int:
 _ARCH_FILE_GLOBS: list[str] = [
     "**/component_manifest.yaml",
     "**/component_manifest.yml",
-    "**/pins_registry.yaml",
-    "**/pins_registry.yml",
     "**/entrypoints.yaml",
     "**/entrypoints.yml",
     "**/wiring.yaml",
@@ -132,8 +134,6 @@ _ARCH_FILE_BASENAMES = frozenset(
     {
         "component_manifest.yaml",
         "component_manifest.yml",
-        "pins_registry.yaml",
-        "pins_registry.yml",
         "entrypoints.yaml",
         "entrypoints.yml",
         "wiring.yaml",
@@ -160,7 +160,6 @@ _ARCH_FILE_HINT_TOKENS = (
     "route",
     "architecture",
     "arch",
-    "pin",
 )
 _PLANNER_DISCOVERY_CHUNK_SIZE = 12000
 
@@ -402,7 +401,7 @@ def _normalize_topology_graph(
     if not isinstance(raw_edges, list):
         raw_edges = []
 
-    allowed_node_kinds = {"component", "pin", "edge", "handler", "route"}
+    allowed_node_kinds = {"component", "edge", "handler", "route"}
     allowed_edge_kinds = {"provides", "consumes", "wired_to", "declared_in"}
 
     nodes: list[dict[str, Any]] = []
@@ -428,7 +427,7 @@ def _normalize_topology_graph(
             "name": str(row.get("name", row.get("label", "")) or "").strip(),
             "file": str(row.get("file", row.get("path", "")) or "").strip().replace("\\", "/"),
         }
-        for field in ("component", "pin", "handler", "route", "metadata"):
+        for field in ("component", "handler", "route", "metadata"):
             if field in row:
                 normalized[field] = row[field]
         nodes.append(normalized)
@@ -547,7 +546,7 @@ class L2LayerResearchAdapter:
                         question=question,
                         context=layer_context,
                         dimension="auto",
-                        layer="l2",
+                        layer="architecture",
                         slice_id=self._slice_id_from_ctx(ctx),
                         hints={"hint": hint} if hint else {},
                     )
@@ -577,7 +576,7 @@ class L2LayerResearchAdapter:
             return hint
         mode = str(getattr(ctx, "mode", "") or "").strip().lower()
         run_id = str(getattr(ctx, "run_id", "") or "").strip()
-        context_parts = ["layer=l2"]
+        context_parts = ["phase=architecture"]
         if mode:
             context_parts.append(f"mode={mode}")
         if run_id:
@@ -649,6 +648,9 @@ class L2Planner:
         the strategy pipeline and bootstraps constraints from workspace
         state.
     """
+    # IMPL(single-layer): This planner remains the PhaseRouter target for
+    # `phase='architecture'`; rename to ArchitecturePhasePlanner only when
+    # router/trace/tool payload schemas migrate together.
 
     def __init__(
         self,
@@ -659,6 +661,7 @@ class L2Planner:
         work_item_store: Any = None,
         wait_graph: Any = None,
     ) -> None:
+        self.phase: PhaseId = _ARCHITECTURE_PHASE
         self.layer: Literal["l2"] = "l2"
         self._research_tool = research_tool
         self._integration_tool = integration_tool
@@ -685,6 +688,9 @@ class L2Planner:
         self._trace = trace
 
     def discover(self, ctx: Any) -> dict[str, Any]:
+        # IMPL(single-layer): Discovery outputs are deterministic architecture
+        # evidence inputs; missing scope/topology evidence should propagate as
+        # blocked architecture diagnostics, never speculative defaults.
         discovery = self.discovery_router.discover(ctx)
         _emit_trace_event(
             self._trace,
@@ -698,6 +704,9 @@ class L2Planner:
         return discovery
 
     def extract_skeleton(self, ctx: Any, discovery: dict[str, Any]) -> dict[str, Any]:
+        # IMPL(single-layer): Treat this as architecture-phase skeleton state
+        # (Section 9.2). Freeze criteria should align to component/contract
+        # inventory + verifier suite, not pin-coverage heuristics.
         return {
             "architecture_topology_graph": {
                 "nodes": [row for row in discovery.get("nodes", []) if isinstance(row, dict)],
@@ -710,6 +719,9 @@ class L2Planner:
 
     def _discover_impl(self, ctx: Any) -> dict[str, Any]:
         """Route slice-scoped architecture artifacts into a topology graph."""
+        # IMPL(single-layer): Keep topology discovery scoped by owned slice roots
+        # and deterministic artifacts; call-graph/LLM outputs are targeting hints
+        # and must not decide authority or convergence.
         workspace_root, scope_roots = self._resolve_discovery_roots(ctx)
         routed_arch_files = _discover_arch_files(
             workspace_root=workspace_root,
@@ -727,7 +739,7 @@ class L2Planner:
         if not routed_arch_files:
             discovery_issues.append(
                 "No architecture manifest files were discovered in scoped roots "
-                "(component_manifest/pins_registry/entrypoints/handlers/routes/wiring)."
+                "(component_manifest/entrypoints/handlers/routes/wiring)."
             )
 
         topology_payload, artifact_issues = self._derive_arch_topology(
@@ -798,6 +810,9 @@ class L2Planner:
             )
 
         topology["discovery_status"] = "ready" if not discovery_issues else "incomplete"
+        # IMPL(single-layer): `discovery_status='incomplete'` should map to
+        # blocked architecture findings with diagnostics (Section 9.3/11), not
+        # cross-phase routing/demotion behavior.
         topology["discovery_issues"] = discovery_issues
 
         logger.debug(
@@ -839,6 +854,40 @@ class L2Planner:
         constraint loading, problem framing, architecture decisions,
         candidate evaluation, authority checks).
         """
+        discovery_status = str(discovery.get("discovery_status", "")).strip().lower()
+        nodes = discovery.get("nodes", [])
+        edges = discovery.get("edges", [])
+        discovery_issues = discovery.get("discovery_issues", [])
+        issues = [
+            str(issue).strip()
+            for issue in discovery_issues
+            if isinstance(issue, str) and str(issue).strip()
+        ]
+        has_topology = isinstance(nodes, list) and bool(nodes) and isinstance(edges, list) and bool(edges)
+        if discovery_status == "incomplete" and not has_topology:
+            fallback_shape_id = str(getattr(ctx, "slice_id", "")).strip()
+            blocked_findings: list[dict[str, Any]] = []
+            source_gaps = gaps if gaps else [{}]
+            for gap in source_gaps:
+                payload = gap if isinstance(gap, dict) else {}
+                blocked_findings.append(
+                    {
+                        "shape_id": self._resolve_shape_id(payload, fallback=fallback_shape_id),
+                        "category": "missing_topology_evidence",
+                        "required_change_type": "spec_change",
+                        "evidence_refs": self._collect_evidence_refs(payload),
+                        "target_files": self._collect_target_files(payload),
+                        "created_in_phase": _ARCHITECTURE_PHASE,
+                        "diagnostic": "Missing topology evidence blocks architecture planning.",
+                    }
+                )
+            return {
+                "intentions": [],
+                "blocked": True,
+                "blocked_findings": blocked_findings,
+                "diagnostics": issues
+                or ["Missing topology evidence blocks architecture planning."],
+            }
         return self._build_plan_via_strategies(ctx, gaps, discovery)
 
     @staticmethod
@@ -910,24 +959,30 @@ class L2Planner:
             scope_roots=scope_roots,
         )
         payload = {
-            "task": "l2_discovery_topology",
-            "layer": "l2",
+            "task": "architecture_discovery_topology",
+            "phase": _ARCHITECTURE_PHASE,
             "workspace_root": str(workspace_root) if workspace_root is not None else "",
             "scope_roots": [str(root) for root in scope_roots],
             "arch_files": arch_artifacts,
         }
+        # IMPL(single-layer): Migrate payload identity from `layer=l2` to
+        # `phase=architecture` atomically with integration adapters and trace
+        # readers so mixed schemas are never emitted within one run.
         prompt = (
             "Produce strict JSON topology with keys: nodes, edges, arch_files. "
-            "Node kinds: component|pin|edge|handler|route. "
+            "Node kinds: component|edge|handler|route. "
             "Edge kinds: provides|consumes|wired_to|declared_in."
         )
+        # IMPL(single-layer): `pin` node/edge semantics are transitional only;
+        # architecture routing authority should shift to shape ownership +
+        # dependency/contract matching outputs (proposal Section 6.3).
 
         raw: Any = None
         tool = self._integration_tool
         try:
             if callable(tool):
                 for kwargs in (
-                    {"task": "l2_discovery_topology", "prompt": prompt, "payload": payload},
+                    {"task": "architecture_discovery_topology", "prompt": prompt, "payload": payload},
                     {"prompt": prompt, "payload": payload},
                     {"payload": payload},
                     {"query": prompt},
@@ -1057,7 +1112,7 @@ class L2Planner:
         if not isinstance(raw_edges, list):
             raw_edges = []
 
-        node_kind_map = {"component": "component", "pin": "pin", "edge": "edge"}
+        node_kind_map = {"component": "component", "edge": "edge"}
         edge_kind_map = {
             "provides": "provides",
             "consumes": "consumes",
@@ -1110,101 +1165,267 @@ class L2Planner:
         }
 
     @staticmethod
-    def _build_gap_intentions(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Build minimal wiring intentions directly from gap payloads."""
-        intentions: list[dict[str, Any]] = []
+    def _dedupe_non_empty(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in values:
+            normalized = str(value).strip().replace("\\", "/")
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    @classmethod
+    def _collect_target_files(cls, *payloads: dict[str, Any]) -> list[str]:
+        files: list[str] = []
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("file", "target_file", "path", "module_path"):
+                value = str(payload.get(key, "")).strip()
+                if value:
+                    files.append(value)
+            for key in ("target_files", "file_targets"):
+                values = payload.get(key)
+                if isinstance(values, list):
+                    files.extend(str(item).strip() for item in values if str(item).strip())
+            location = payload.get("location")
+            if isinstance(location, dict):
+                location_file = str(location.get("file_path") or location.get("file") or "").strip()
+                if location_file:
+                    files.append(location_file)
+            file_locations = payload.get("file_locations")
+            if isinstance(file_locations, list):
+                for row in file_locations:
+                    if not isinstance(row, dict):
+                        continue
+                    file_path = str(row.get("file_path") or row.get("file") or "").strip()
+                    if file_path:
+                        files.append(file_path)
+        return cls._dedupe_non_empty(files)
+
+    @classmethod
+    def _collect_evidence_refs(cls, *payloads: dict[str, Any]) -> list[str]:
+        refs: list[str] = []
+
+        def _extend(value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, str):
+                text = value.strip()
+                if text:
+                    refs.append(text)
+                return
+            if isinstance(value, list | tuple | set):
+                for item in value:
+                    _extend(item)
+                return
+            if isinstance(value, dict):
+                for key in (
+                    "evidence_refs",
+                    "trigger_evidence",
+                    "source_refs",
+                    "spec_ref",
+                    "spec_comment_ref",
+                    "ref",
+                    "source_file",
+                    "file",
+                    "path",
+                ):
+                    if key in value:
+                        _extend(value.get(key))
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in (
+                "evidence_refs",
+                "trigger_evidence",
+                "source_refs",
+                "spec_refs",
+                "spec_ref",
+                "spec_comment_ref",
+            ):
+                _extend(payload.get(key))
+
+        return cls._dedupe_non_empty(refs)
+
+    @staticmethod
+    def _resolve_shape_id(*payloads: dict[str, Any], fallback: str = "") -> str:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("shape_id", "owner_shape_id"):
+                value = str(payload.get(key, "")).strip()
+                if value:
+                    return value
+            metadata = payload.get("metadata")
+            if isinstance(metadata, dict):
+                for key in ("shape_id", "owner_shape_id"):
+                    value = str(metadata.get(key, "")).strip()
+                    if value:
+                        return value
+            for key in ("component_id", "id"):
+                value = str(payload.get(key, "")).strip()
+                if value:
+                    return value
+        return str(fallback).strip()
+
+    @staticmethod
+    def _normalize_required_change_type(value: Any, *, default: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"behavior_change", "wiring_only", "spec_change", "refactor_only"}:
+            return normalized
+        return str(default).strip().lower() or "wiring_only"
+
+    @staticmethod
+    def _resolve_finding_detail(*payloads: dict[str, Any]) -> str:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("approach", "details", "summary", "description", "reason"):
+                detail = str(payload.get(key, "")).strip()
+                if not detail:
+                    continue
+                if detail in {"stub_proposal", "parse_error", "No LLM available"}:
+                    continue
+                return detail
+        return ""
+
+    @staticmethod
+    def _resolve_finding_category(required_change_type: str, *payloads: dict[str, Any]) -> str:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("category", "kind"):
+                category = str(payload.get(key, "")).strip().lower()
+                if category:
+                    return category
+        if required_change_type == "wiring_only":
+            return "wiring_fix"
+        if required_change_type == "spec_change":
+            return "contract_or_structure"
+        if required_change_type == "behavior_change":
+            return "behavior_remediation"
+        return "architecture_change"
+
+    @classmethod
+    def _build_architecture_finding(
+        cls,
+        *,
+        intention: dict[str, Any],
+        gap: dict[str, Any],
+        fallback_shape_id: str,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        required_change_type = cls._normalize_required_change_type(
+            intention.get("required_change_type", gap.get("required_change_type", "")),
+            default="wiring_only",
+        )
+        shape_id = cls._resolve_shape_id(intention, gap, fallback=fallback_shape_id)
+        evidence_refs = cls._collect_evidence_refs(intention, gap)
+        target_files = cls._collect_target_files(intention, gap)
+        detail = cls._resolve_finding_detail(intention, gap)
+        category = cls._resolve_finding_category(required_change_type, intention, gap)
+
+        if required_change_type == "refactor_only":
+            blocked = {
+                "shape_id": shape_id,
+                "category": category,
+                "required_change_type": required_change_type,
+                "evidence_refs": evidence_refs,
+                "target_files": target_files,
+                "created_in_phase": _ARCHITECTURE_PHASE,
+                "diagnostic": (
+                    "Refactor-only finding is outside architecture authority; "
+                    "block for explicit quality-phase triage."
+                ),
+            }
+            if detail:
+                blocked["summary"] = detail
+            return None, blocked
+
+        if not shape_id:
+            blocked = {
+                "shape_id": "",
+                "category": category,
+                "required_change_type": required_change_type,
+                "evidence_refs": evidence_refs,
+                "target_files": target_files,
+                "created_in_phase": _ARCHITECTURE_PHASE,
+                "diagnostic": "Architecture finding is missing deterministic shape ownership.",
+            }
+            if detail:
+                blocked["summary"] = detail
+            return None, blocked
+
+        finding = {
+            "shape_id": shape_id,
+            "category": category,
+            "required_change_type": required_change_type,
+            "evidence_refs": evidence_refs,
+            "target_files": target_files,
+            "created_in_phase": _ARCHITECTURE_PHASE,
+        }
+        if detail:
+            finding["summary"] = detail
+        return finding, None
+
+    @classmethod
+    def _build_gap_intentions(
+        cls,
+        gaps: list[dict[str, Any]],
+        *,
+        fallback_shape_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Build architecture findings directly from gap payloads."""
+        # IMPL(single-layer): Intention payloads should converge to architecture
+        # work-item contracts (`shape_id`, `created_in_phase='architecture'`,
+        # `required_change_type`, `evidence_refs`); file refs stay as hints.
+        findings: list[dict[str, Any]] = []
+        blocked_findings: list[dict[str, Any]] = []
         for gap in gaps:
             if not isinstance(gap, dict):
                 continue
-            target_files = gap.get("target_files", [])
-            if not isinstance(target_files, list):
-                target_files = []
-            if (
-                not target_files
-                and isinstance(gap.get("file"), str)
-                and str(gap.get("file", "")).strip()
-            ):
-                target_files = [str(gap.get("file", "")).strip()]
-
-            approach = str(gap.get("description", gap.get("summary", ""))).strip()
-            intentions.append(
-                {
-                    "component_id": str(gap.get("component_id") or gap.get("id") or "").strip(),
-                    "target_files": [
-                        str(path).strip() for path in target_files if str(path).strip()
-                    ],
-                    "approach": approach,
-                    "pin_refs": [
-                        str(ref).strip() for ref in gap.get("pin_refs", []) if str(ref).strip()
-                    ]
-                    if isinstance(gap.get("pin_refs"), list)
-                    else [],
-                    "dependencies": [
-                        str(dep).strip() for dep in gap.get("dependencies", []) if str(dep).strip()
-                    ]
-                    if isinstance(gap.get("dependencies"), list)
-                    else [],
-                }
+            finding, blocked = cls._build_architecture_finding(
+                intention={},
+                gap=gap,
+                fallback_shape_id=fallback_shape_id,
             )
-        return intentions
+            if finding is not None:
+                findings.append(finding)
+            if blocked is not None:
+                blocked_findings.append(blocked)
+        return findings, blocked_findings
 
-    @staticmethod
+    @classmethod
     def _normalize_intentions_for_output(
+        cls,
         intentions: list[dict[str, Any]],
         gaps: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Project strategy outputs onto the L2 wiring intention contract."""
+        *,
+        fallback_shape_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Project strategy outputs onto architecture-phase finding contracts."""
+        # IMPL(single-layer): Normalization is the migration seam where strategy
+        # outputs must be projected onto shared phase-local work-item fields and
+        # out-of-authority `refactor_only` findings surfaced as block diagnostics.
         normalized: list[dict[str, Any]] = []
+        blocked_findings: list[dict[str, Any]] = []
         for index, intention in enumerate(intentions):
             if not isinstance(intention, dict):
                 continue
-            if "component_id" in intention:
-                normalized.append(dict(intention))
-                continue
-
             gap = gaps[index] if index < len(gaps) and isinstance(gaps[index], dict) else {}
-            target_files = gap.get("target_files", [])
-            if not isinstance(target_files, list):
-                target_files = []
-            if (
-                not target_files
-                and isinstance(gap.get("file"), str)
-                and str(gap.get("file", "")).strip()
-            ):
-                target_files = [str(gap.get("file", "")).strip()]
-
-            approach = str(intention.get("approach", "")).strip()
-            if approach in {"stub_proposal", "parse_error"}:
-                approach = ""
-            if not approach:
-                approach = str(intention.get("details", "")).strip()
-            if approach == "No LLM available":
-                approach = ""
-            if not approach:
-                approach = str(gap.get("description", gap.get("summary", ""))).strip()
-
-            normalized.append(
-                {
-                    "component_id": str(
-                        gap.get("component_id") or gap.get("id") or intention.get("source") or ""
-                    ).strip(),
-                    "target_files": [
-                        str(path).strip() for path in target_files if str(path).strip()
-                    ],
-                    "approach": approach,
-                    "pin_refs": [
-                        str(ref).strip() for ref in gap.get("pin_refs", []) if str(ref).strip()
-                    ]
-                    if isinstance(gap.get("pin_refs"), list)
-                    else [],
-                    "dependencies": [
-                        str(dep).strip() for dep in gap.get("dependencies", []) if str(dep).strip()
-                    ]
-                    if isinstance(gap.get("dependencies"), list)
-                    else [],
-                }
+            finding, blocked = cls._build_architecture_finding(
+                intention=intention,
+                gap=gap,
+                fallback_shape_id=fallback_shape_id,
             )
-        return normalized
+            if finding is not None:
+                normalized.append(finding)
+            if blocked is not None:
+                blocked_findings.append(blocked)
+        return normalized, blocked_findings
 
     @staticmethod
     def _normalize_decision_requirements_for_output(
@@ -1271,8 +1492,8 @@ class L2Planner:
             return None
 
         for index, intention in enumerate(intentions):
-            component_id = str(intention.get("component_id", "")).strip().lower()
-            if component_id and component_id in needed_tokens:
+            shape_id = str(intention.get("shape_id", "")).strip().lower()
+            if shape_id and shape_id in needed_tokens:
                 return index
 
             target_files = intention.get("target_files", [])
@@ -1304,9 +1525,13 @@ class L2Planner:
         if not intentions:
             return [
                 {
-                    "component_id": "",
+                    "shape_id": "",
                     "target_files": [],
-                    "approach": "Resolve planning decision requirements before implementation.",
+                    "category": "decision_requirement",
+                    "required_change_type": "spec_change",
+                    "created_in_phase": _ARCHITECTURE_PHASE,
+                    "summary": "Resolve planning decision requirements before implementation.",
+                    "evidence_refs": [],
                     "decision_requirements": [dict(item) for item in decision_requirements],
                 }
             ]
@@ -1367,6 +1592,7 @@ class L2Planner:
         )
 
         session_ctx: dict[str, Any] = {
+            "phase": _ARCHITECTURE_PHASE,
             "layer": "L2",
             "slice_id": getattr(ctx, "slice_id", ""),
             "run_id": getattr(ctx, "run_id", "default"),
@@ -1381,6 +1607,9 @@ class L2Planner:
             "bundle_ref": getattr(ctx, "bundle_ref", None),
             "metadata": metadata,
         }
+        # IMPL(single-layer): Session context vocabulary must migrate
+        # atomically (`layer=L2` -> `phase=architecture`) with planner strategy
+        # consumers and persisted artifacts.
 
         session = PlanningSession(
             ctx=session_ctx,
@@ -1410,11 +1639,48 @@ class L2Planner:
         ]
 
         runner = PlanningSessionRunner(strategies)
-        session = runner.run(session)
+        fallback_shape_id = str(getattr(ctx, "slice_id", "")).strip()
+        try:
+            session = runner.run(session)
+        except Exception as exc:
+            logger.warning("L2 strategy pipeline failed; using gap-derived findings", exc_info=True)
+            fallback_findings, blocked_findings = self._build_gap_intentions(
+                gaps,
+                fallback_shape_id=fallback_shape_id,
+            )
+            fallback_findings = [
+                finding
+                for finding in fallback_findings
+                if finding.get("required_change_type") in _ALLOWED_ARCH_CHANGE_TYPES
+            ]
+            diagnostics = [
+                "Architecture strategy pipeline failed; fallback findings were derived from gaps.",
+                str(exc).strip() or "strategy_pipeline_failure",
+            ]
+            result: dict[str, Any] = {"intentions": fallback_findings}
+            if blocked_findings:
+                result["blocked"] = True
+                result["blocked_findings"] = blocked_findings
+            result["diagnostics"] = diagnostics
+            return result
 
-        intentions = self._normalize_intentions_for_output(session.intentions, gaps)
+        intentions, blocked_findings = self._normalize_intentions_for_output(
+            session.intentions,
+            gaps,
+            fallback_shape_id=fallback_shape_id,
+        )
         if not intentions and gaps:
-            intentions = self._build_gap_intentions(gaps)
+            gap_findings, gap_blocked = self._build_gap_intentions(
+                gaps,
+                fallback_shape_id=fallback_shape_id,
+            )
+            intentions = gap_findings
+            blocked_findings.extend(gap_blocked)
+        intentions = [
+            finding
+            for finding in intentions
+            if finding.get("required_change_type") in _ALLOWED_ARCH_CHANGE_TYPES
+        ]
         decision_requirements = self._normalize_decision_requirements_for_output(
             session.decision_requirements
         )
@@ -1424,6 +1690,17 @@ class L2Planner:
         )
 
         result: dict[str, Any] = {"intentions": intentions}
+        if blocked_findings:
+            result["blocked"] = True
+            result["blocked_findings"] = blocked_findings
+            result["diagnostics"] = [
+                str(finding.get("diagnostic", "")).strip()
+                for finding in blocked_findings
+                if str(finding.get("diagnostic", "")).strip()
+            ]
+        # IMPL(single-layer): Architecture plan outputs should stay phase-local;
+        # findings outside architecture authority must return blocked diagnostics
+        # rather than being forwarded to other phases.
         if session.new_constraints:
             constraints_to_write = [
                 constraint.to_dict()
@@ -1444,6 +1721,9 @@ class L2Planner:
         events: list[dict[str, Any]],
         discovery: dict[str, Any],
     ) -> dict[str, Any]:
+        # IMPL(single-layer): Under-spec remains a block-or-resolve decision in
+        # the active phase; unresolved ambiguity should not trigger cross-phase
+        # rerouting.
         result = self.layer_research_adapter.resolve_under_spec(ctx, events, discovery)
         _emit_trace_event(
             self._trace,
@@ -1597,7 +1877,7 @@ class L2Planner:
 
             questions.append(
                 f"{base_question} Missing routed artifact detail: specify "
-                "source/target components, pins/interfaces, and the "
+                "source/target components, interfaces/contracts, and the "
                 "architecture files that define them."
             )
         return questions
@@ -1716,8 +1996,6 @@ class L2Planner:
             "symbol",
             "source_component",
             "target_component",
-            "pin_id",
-            "pin_ref",
             "event_id",
             "contract_name",
             "event_name",
@@ -1725,11 +2003,6 @@ class L2Planner:
             value = event.get(key)
             if isinstance(value, str) and value.strip():
                 terms.add(value.strip().lower())
-        pin_refs = event.get("pin_refs")
-        if isinstance(pin_refs, list):
-            for pin in pin_refs:
-                if isinstance(pin, str) and pin.strip():
-                    terms.add(pin.strip().lower())
 
         question_text = str(question or "").strip().lower()
         if question_text:
@@ -1846,6 +2119,9 @@ class L2Planner:
 
     def triage_signal(self, ctx: Any, signal: dict[str, Any]) -> dict[str, Any]:
         """Triage a coordination signal into scoped architecture decision work."""
+        # IMPL(single-layer): Triage should persist architecture-scoped work items
+        # through create/upsert semantics keyed by shape/scope with deterministic
+        # evidence refs; avoid add-only flows that obscure evidence merges.
         if not isinstance(signal, dict):
             return {"action": "NOOP", "monitors": []}
 
@@ -1862,13 +2138,17 @@ class L2Planner:
         target_slice = str(getattr(ctx, "slice_id", "") or "").strip()
         if not target_slice:
             target_slice = _parse_inter_scope_components(inter_scope)[0]
+        run_id = str(getattr(ctx, "run_id", "") or "").strip()
+        routed_shape_id = self._resolve_shape_id(signal, fallback=target_slice)
         signal_id = str(signal.get("signal_id", "")).strip()
 
         location = _extract_signal_location(signal)
         routing_payload = _build_arch_decision_routing_payload(
             work_item_id=work_item_id,
             summary=summary,
-            owner_slice_id=target_slice,
+            run_id=run_id,
+            slice_id=target_slice,
+            shape_id=routed_shape_id,
             scope=inter_scope,
             trigger_refs=trigger_refs,
             location=location,
@@ -1877,37 +2157,28 @@ class L2Planner:
         existing_work_item_status = ""
         if self._work_item_store is not None:
             try:
-                from spec_manager.orchestration.coordination.work_items import (
-                    WorkItem,
-                    WorkItemLocation,
-                )
+                from spec_manager.orchestration.coordination.work_items import WorkItem
 
+                work_item = WorkItem.from_dict(routing_payload)
                 existing = self._work_item_store.get(work_item_id)
                 if existing is None:
-                    self._work_item_store.add(
-                        WorkItem(
-                            work_item_id=work_item_id,
-                            spec_text=summary,
-                            owner_slice_id=target_slice,
-                            status="OPEN",
-                            kind="ARCH_DECISION",
-                            scope=inter_scope,
-                            trigger_refs=trigger_refs,
-                            required_constraints=[],
-                            candidate_refs=[],
-                            selected_candidate_ref="",
-                            location=WorkItemLocation(
-                                file=location["file"],
-                                symbol=location["symbol"],
-                                line_hint=location["line_hint"],
-                            ),
-                            metadata={
-                                "signal_id": signal_id,
-                            },
-                        )
-                    )
+                    self._work_item_store.create(work_item)
                 else:
                     existing_work_item_status = str(getattr(existing, "status", "")).strip().upper()
+                    if existing_work_item_status != "DECIDED":
+                        upsert_payload = work_item.to_dict()
+                        if existing_work_item_status == "OPEN":
+                            upsert_payload["status"] = "EXPLORING"
+                        elif existing_work_item_status == "EXPLORING":
+                            upsert_payload["status"] = "OPEN"
+                        elif existing_work_item_status == "BLOCKED":
+                            upsert_payload["status"] = "EXPLORING"
+                        else:
+                            upsert_payload["status"] = existing_work_item_status
+                        self._work_item_store.upsert(
+                            WorkItem.from_dict(upsert_payload),
+                            merge_policy="append_evidence",
+                        )
                     routing_payload = {}
             except Exception:
                 logger.warning(
@@ -1931,7 +2202,7 @@ class L2Planner:
             "required_status": "DECIDED",
             "kind": "work_item_status",
             "signal_id": signal_id,
-            "run_id": str(getattr(ctx, "run_id", "") or "").strip(),
+            "run_id": run_id,
             "timeout_seconds": 3600,
         }
         if routing_payload:
@@ -1940,7 +2211,7 @@ class L2Planner:
                 "routing": [routing_payload],
                 "monitors": [monitor],
                 "scope": inter_scope,
-                "why": "cross_boundary_evidence_requires_l2_decision",
+                "why": "cross_boundary_evidence_requires_architecture_decision",
             }
 
         return {
@@ -1948,7 +2219,7 @@ class L2Planner:
             "routing": [],
             "monitors": [monitor],
             "scope": inter_scope,
-            "why": "cross_boundary_evidence_waiting_existing_l2_decision",
+            "why": "cross_boundary_evidence_waiting_existing_architecture_decision",
         }
 
 
@@ -2042,16 +2313,12 @@ def _extract_interaction_handle(mapping: dict[str, Any]) -> str:
         "interaction_handle",
         "event_name",
         "contract_name",
-        "pin_mismatch",
-        "pin_id",
-        "pin_ref",
         "import_path",
         "import_symbol",
         "call_symbol",
         "call_name",
         "event",
         "contract",
-        "pin",
         "edge_id",
         "event_id",
     )
@@ -2171,7 +2438,7 @@ def _collect_signal_trigger_refs(signal: dict[str, Any]) -> list[str]:
                 refs.append(source_file)
 
     for mapping in _walk_mappings(signal):
-        for key in ("trigger_evidence", "evidence_refs", "event_id", "pin_ref", "pin_id"):
+        for key in ("trigger_evidence", "evidence_refs", "event_id"):
             value = mapping.get(key)
             if isinstance(value, str) and value.strip():
                 refs.append(value.strip())
@@ -2192,26 +2459,41 @@ def _build_arch_decision_routing_payload(
     *,
     work_item_id: str,
     summary: str,
-    owner_slice_id: str,
+    run_id: str,
+    slice_id: str,
+    shape_id: str,
     scope: str,
     trigger_refs: list[str],
     location: dict[str, Any],
 ) -> dict[str, Any]:
+    # IMPL(single-layer): Routing payloads should carry shape-aware phase-local
+    # identity (`shape_id`, `created_in_phase='architecture'`) once coordination
+    # schemas complete migration from layer tokens.
     return {
         "work_item_id": work_item_id,
-        "spec_text": summary,
-        "owner_slice_id": owner_slice_id,
+        "run_id": run_id,
+        "slice_id": slice_id,
+        "title": summary,
+        "description": summary,
+        "shape_id": shape_id,
+        "created_in_phase": _ARCHITECTURE_PHASE,
+        "required_change_type": "spec_change",
         "status": "OPEN",
         "kind": "ARCH_DECISION",
-        "scope": scope,
-        "trigger_refs": trigger_refs,
-        "required_constraints": [],
-        "candidate_refs": [],
-        "selected_candidate_ref": "",
-        "location": {
-            "file": str(location.get("file", "")).strip(),
-            "symbol": str(location.get("symbol", "")).strip(),
-            "line_hint": int(location.get("line_hint", 0) or 0),
+        "priority": "high",
+        "file_locations": [
+            {
+                "file_path": str(location.get("file", "")).strip(),
+                "symbol": str(location.get("symbol", "")).strip() or None,
+                "line_start": int(location.get("line_hint", 0) or 0) or None,
+                "line_end": None,
+            }
+        ],
+        "evidence_refs": [str(ref).strip() for ref in trigger_refs if str(ref).strip()],
+        "contract_ids": [],
+        "verifier_ids": [],
+        "metadata": {
+            "scope": scope,
+            "trigger_refs": [str(ref).strip() for ref in trigger_refs if str(ref).strip()],
         },
-        "metadata": {},
     }
