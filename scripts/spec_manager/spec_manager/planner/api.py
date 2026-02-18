@@ -26,6 +26,9 @@
 # IMPL(single-layer): Keep API request/trace/result schema migration atomic with
 # `planner.router` (`layer` -> `phase`, `layer_skeleton` -> `phase_skeleton`) so
 # trace persistence/replay and planner outputs never mix both vocabularies.
+# IMPL(single-layer): Quality-phase out-of-authority findings (behavior change
+# required) should propagate as `BLOCKED` planner results with diagnostics; the
+# general planner must not remap those outcomes to earlier phases.
 #   Test requirements:
 #     - Phase dispatch for all three phases.
 #     - Trace persistence still works on success and error.
