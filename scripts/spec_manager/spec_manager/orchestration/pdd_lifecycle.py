@@ -73,6 +73,12 @@
 # IMPL(single-layer): When `orchestration.demotion` replaces layer-targeted `apply()`
 # with phase-local `escalate()`, lifecycle QA/demotion rounds should persist escalation
 # work items and block on QUEUED/BLOCKED outcomes instead of patch-apply retries.
+# IMPL(single-layer): Lifecycle -> PromotionLoop invocation should carry phase identity
+# and phase-local bounds end-to-end; remove dependence on `SliceRef.layer` +
+# `RunContext.max_iterations_by_layer` once PromotionLoop switches to `PhaseId`.
+# IMPL(single-layer): Lifecycle scheduler/result aggregation should migrate wake/result
+# payload handling from `layer` + `demotion_tickets` to `phase` + phase-local work-item
+# escalation diagnostics so WAITING/BLOCKED convergence logic matches monitor schemas.
 #   Test requirements:
 #     - Forward-only phase ordering (Libraries -> Architecture -> Quality).
 #     - Phase-appropriate behaviors (L1/L2/L3) in each phase's PromotionLoop.
