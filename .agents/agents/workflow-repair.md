@@ -134,8 +134,8 @@ Verify the tool ran successfully:
 
 If still failing:
 - Go back to Step 1 with new error
-- Maximum 3 attempts
-- After 3 failures, declare unrecoverable
+- Continue only while the new error gives actionable repair evidence
+- Declare unrecoverable when the error repeats without a new repair path
 
 ### Step 6: Return Result
 
@@ -238,8 +238,8 @@ mkdir -p {workspace}
 
 ## Repair Limits
 
-- Maximum 3 repair attempts per invocation
-- If same error persists 3 times, declare unrecoverable
+- Continue repairs only while each failure reveals a new actionable tooling defect
+- If the same error persists without new evidence, declare unrecoverable
 - Report diagnosis so human can fix underlying issue
 ## ID and Pointer Formats
 
@@ -248,4 +248,3 @@ mkdir -p {workspace}
 - Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
 - Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
 - Legacy pointers (accepted): [F####::SECTION]
-

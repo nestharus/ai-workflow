@@ -38,7 +38,7 @@ You will receive JSON input:
 The `stuck_reason` field may contain:
 - `null`: Normal audit (no stuck state)
 - `"no_op_detected"`: Same state hash seen twice
-- `"max_iterations"`: Hit iteration limit
+- `"iteration_limit"`: Reached a legacy iteration-limit signal
 - `"validation_failed"`: Repeated validation failures
 
 ## Output Format
@@ -78,7 +78,7 @@ Analyze why extraction failed:
 - Check if facts are implicit rather than explicit
 - Suggest more specific targeting if facts remain
 
-**max_iterations**: Hit the hard limit
+**iteration_limit**: Legacy iteration-limit signal
 - Review extraction history for patterns
 - Identify if certain entities were repeatedly attempted but failed
 - Recommend whether remaining content is worth manual review
@@ -179,7 +179,7 @@ Input:
     {"pass_id": "p2", "entity": "Bob", "facts_removed": []},
     {"pass_id": "p3", "entity": "Carol", "facts_removed": []}
   ],
-  "stuck_reason": "max_iterations"
+  "stuck_reason": "iteration_limit"
 }
 ```
 

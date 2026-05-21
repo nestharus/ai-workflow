@@ -487,7 +487,7 @@ Newline-delimited JSON (NDJSON). Each log entry is a single JSON object on one l
 
 > **Note on retry terminology:** Use "exponential backoff" only when delay increases between retries (e.g., 100ms → 200ms → 400ms). For other patterns, use:
 > - **Fixed delay**: Constant wait time between retries (e.g., 200ms here)
-> - **Backoff with maximum attempts**: Multiple retries with consistent delay (e.g., 500ms, max 3 attempts in Step 3)
+> - **Fixed retry window**: Multiple retries with consistent delay (e.g., 500ms in Step 3)
 
 **Decision logic**:
 | Response | Condition | Action |
@@ -639,7 +639,7 @@ Each step specifies the tool used, expected input/output, error cases, and recov
 | Error Case | Recovery Path |
 |------------|---------------|
 | File not found | Log error, abort with `resolution: "skipped"`, reason: "synthesis_not_found" |
-| File locked/busy | Retry with 500ms backoff (max 3 attempts); if still locked, escalate |
+| File locked/busy | Retry with 500ms backoff in the configured file-system retry window; if still locked, escalate |
 | Malformed markdown | Log warning, continue with best-effort parsing |
 
 **Logging**: INFO before read, INFO on success, WARN on retry, ERROR on abort

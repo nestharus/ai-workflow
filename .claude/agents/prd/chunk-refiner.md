@@ -573,9 +573,9 @@ Filenames follow the pattern: `{baseName}_chunk{NNN}_v{M}.md` where:
 
 1. Generate initial filename: `{baseName}_chunk{NNN}_v1.md`
 2. If file exists, increment version: `v2`, `v3`, etc.
-3. Continue until a free name is found or `max_retry_depth` is reached
-4. **max_retry_depth** (configurable, default: 100): Maximum version attempts before failure
-5. If limit reached, fail with: `"Error: File conflict resolution exceeded max_retry_depth (100)
+3. Continue until a free name is found or `collision_guard_depth` is reached
+4. **collision_guard_depth** (configurable, default: 100): version-search guard before failure
+5. If the guard is reached, fail with: `"Error: File conflict resolution exceeded collision_guard_depth (100)
    for {baseName}_chunk{NNN}. Manual cleanup required."`
 
 **Example collision flow:**

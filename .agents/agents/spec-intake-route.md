@@ -50,7 +50,7 @@ In real specs, the breakdown of "MUST" statements is approximately:
 | "`blocker_kind` MUST be present when `status == blocked`" | DETAIL/SHAPE | This is a field validation rule. A different implementation might use different field names. |
 | "Steps MUST emit `step_start` / `step_stop` events" | DETAIL/ALGORITHM | This prescribes specific event names. The invariant would be "every step must produce evidence sufficient to reconstruct what happened." |
 | "Trust > Friction > Performance" | CONSTRAINTS | This IS a guiding principle. It tells you WHY you might choose a slower but more durable approach. Survives any reimplementation. |
-| "No silent termination — no fixed max iteration caps" | CONSTRAINTS | This constrains ALL algorithms regardless of implementation. |
+| "No silent termination — no fixed iteration ceilings" | CONSTRAINTS | This constrains ALL algorithms regardless of implementation. |
 | "We chose file-based queues because this is a local-first CLI tool" | ANALYSIS | Decision rationale — explains WHY a choice was made. |
 | "The system processes tickets through a lifecycle of states" | DETAIL/ALGORITHM | Describes system behavior — can be expressed as functions. |
 

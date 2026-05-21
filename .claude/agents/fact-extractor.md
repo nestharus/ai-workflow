@@ -20,7 +20,7 @@ Extract facts about entity "FastAPI" from sentence: "Mount endpoints using FastA
 ## Core Workflow
 
 1. **Parse Input**: Extract entity and sentence from the prompt
-2. **Iterate** (max 10 iterations):
+2. **Iterate** until the entity is absent or no progress is possible:
    - Check if entity is present in current sentence
    - If absent, output final JSON and stop
    - Extract exactly ONE atomic fact about the entity
@@ -117,7 +117,7 @@ If entity still present after 10 iterations:
     "entity_absent": false,
     "information_preserved": true
   },
-  "error": "Max iterations reached, entity still present"
+  "error": "No progress possible, entity still present"
 }
 ```
 
@@ -162,4 +162,4 @@ If no facts can be extracted:
 2. One fact per iteration (never batch)
 3. Preserve non-entity information in residual
 4. Use high confidence for clear extractions
-5. Max 10 iterations (loop protection)
+5. Stop only when the entity is absent or an iteration makes no progress

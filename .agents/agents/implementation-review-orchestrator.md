@@ -184,14 +184,14 @@ Status: CLEAN
 Iterations: {count}
 ```
 
-**On max iterations:**
+**On unresolved issues:**
 
 Preserve workspace for inspection:
 ```
 === Implementation Review Incomplete ===
 Plan: {plan_file}
 Status: ISSUES REMAIN
-Iterations: 3
+Iterations: {count}
 Workspace preserved: .tmp/implementation-review/
 ```
 
@@ -310,7 +310,7 @@ State file tracks workflow progress for resumability:
 2. On failure, invoke workflow-repair with failed command details
 3. Workflow-repair fixes tooling, not content
 4. Use workflow-repair's `tool_output` to continue
-5. Maximum 3 review iterations (repairs don't count)
+5. Continue review passes until the result is clean or the review loop halts for unrecoverable tooling, repeated unchanged findings, or required human input
 6. Preserve workspace on unrecoverable failure
 7. Pass only file paths between agents
 
@@ -340,4 +340,3 @@ re-runs command, QAs it
 - Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
 - Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
 - Legacy pointers (accepted): [F####::SECTION]
-

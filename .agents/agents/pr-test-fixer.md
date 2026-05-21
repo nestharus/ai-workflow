@@ -204,10 +204,10 @@ If the fix requires changes to files outside these two files, do NOT make those 
 If the first fix attempt fails:
 1. Analyze the new error output
 2. Re-classify severity if the error type changed
-3. Attempt ONE additional fix
-4. If still failing after second attempt, return `error` status with details
+3. Apply another fix only when the new evidence identifies a distinct root cause
+4. If the failure repeats without a distinct root cause, return `error` status with details
 
-Do NOT loop indefinitely - maximum 2 fix attempts per invocation.
+Do NOT loop indefinitely. Continue only while each pass has new, actionable evidence.
 ## ID and Pointer Formats
 
 - File IDs: F#### (e.g., F0001)
@@ -215,4 +215,3 @@ Do NOT loop indefinitely - maximum 2 fix attempts per invocation.
 - Section IDs: SEC-F####-#### (e.g., SEC-F0001-0003)
 - Preferred pointers: [spec_snapshot/<relpath>::SEC-F####-####] (example: [spec_snapshot/requirements/core.md::SEC-F0001-0003])
 - Legacy pointers (accepted): [F####::SECTION]
-
